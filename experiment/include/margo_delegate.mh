@@ -4,18 +4,22 @@ static int margo_delegate_build(int argc, char **argv) {
         return 1;
     }
     const char *target = getenv("MARGO_BOOTSTRAP");
-    char target_buf[4096];
+    enum { MARGO_PATH_BUF_LEN = 4096 };
+    static const char *MARGO_BOOTSTRAP_SUFFIX = "/../build/margo-c";
+    char target_buf[MARGO_PATH_BUF_LEN];
     if (!target || target[0] == '\0') {
         ssize_t n = readlink("/proc/self/exe", target_buf, sizeof(target_buf) - 1);
-        if (n > 0) {
+        if (n <= 0 || (size_t)n == sizeof(target_buf) - 1) {
+            target = NULL;
+        } else {
             target_buf[n] = '\0';
             char *last_slash = strrchr(target_buf, '/');
             if (last_slash != NULL) {
                 *last_slash = '\0';
                 size_t base_len = strlen(target_buf);
-                const char *suffix = "/../build/margo-c";
-                if (base_len + strlen(suffix) + 1 < sizeof(target_buf)) {
-                    strcat(target_buf, suffix);
+                size_t suffix_len = strlen(MARGO_BOOTSTRAP_SUFFIX);
+                if (base_len + suffix_len + 1 < sizeof(target_buf)) {
+                    memcpy(target_buf + base_len, MARGO_BOOTSTRAP_SUFFIX, suffix_len + 1);
                     target = target_buf;
                 }
             }
