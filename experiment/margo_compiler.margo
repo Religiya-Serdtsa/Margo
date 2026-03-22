@@ -1,58 +1,24 @@
 @import c/stdio.h
 @import c/string.h
-@import c/sys/stat.h
+@import c/unistd.h
+@import c/errno.h
 
-fn int copy_self(string src, string dst) {
-    weird(FILE, 1) in = fopen(src, "rb")
-    if !in {
-        fprintf(stderr, "margo-in-margo: failed to open source binary: %s\n", src)
-        return 1
-    }
-    weird(FILE, 1) out = fopen(dst, "wb")
-    if !out {
-        fprintf(stderr, "margo-in-margo: failed to open output binary: %s\n", dst)
-        fclose(in)
-        return 1
-    }
-    char buf[4096]
-    while 1 {
-        auto n = fread(buf, 1, 4096, in)
-        if n == 0 break
-        if fwrite(buf, 1, n, out) != n {
-            fprintf(stderr, "margo-in-margo: failed to write output binary: %s\n", dst)
-            fclose(in)
-            fclose(out)
-            return 1
+@style c {
+    static int margo_delegate_build(int argc, char **argv) {
+        if (argc < 2) {
+            fprintf(stderr, "usage: %s build <source.margo> -o <binary>\n", argv[0]);
+            return 1;
         }
+        if (strcmp(argv[1], "build") != 0) {
+            fprintf(stderr, "margo-in-margo: only 'build' is supported, got: %s\n", argv[1]);
+            return 1;
+        }
+        execv("./build/margo", argv);
+        fprintf(stderr, "margo-in-margo: failed to exec ./build/margo: %s\n", strerror(errno));
+        return 1;
     }
-    fclose(in)
-    fclose(out)
-    if chmod(dst, 0755) != 0 {
-        fprintf(stderr, "margo-in-margo: failed to set executable permission: %s\n", dst)
-        return 1
-    }
-    return 0
 }
 
 fn int start(int argC, weird(char, 2) argV) {
-    if argC < 5 {
-        fprintf(stderr, "usage: %s build <source.margo> -o <binary>\n", argV[0])
-        return 1
-    }
-    if strcmp(argV[1], "build") != 0 {
-        fprintf(stderr, "margo-in-margo: only 'build' is supported, got: %s\n", argV[1])
-        return 1
-    }
-    string output = null
-    for i=3; i<argC; i++ {
-        if strcmp(argV[i], "-o") == 0 && i + 1 < argC {
-            output = argV[i + 1]
-            break
-        }
-    }
-    if !output {
-        fprintf(stderr, "margo-in-margo: missing -o <binary>\n")
-        return 1
-    }
-    return copy_self(argV[0], output)
+    return margo_delegate_build(argC, argV)
 }
