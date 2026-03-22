@@ -21,6 +21,8 @@
 
 fn void release_graph(weird(struct Graph, 1) graph) {
     if !graph return
+    free(graph->offsets)
+    free(graph->edges)
     graph->offsets = NULL
     graph->edges = NULL
     graph->num_nodes = 0
@@ -42,17 +44,29 @@ fn load_graph(string path, weird(struct Graph, 1) graph) {
         return 1
     }
 
-    weird(uint64_t, 1) offsets = alloc((nodes + 1) * 8)
-    weird(uint32_t, 1) edge_list = alloc(edges * 4)
+    weird(uint64_t, 1) offsets = malloc((nodes + 1) * 8)
+    weird(uint32_t, 1) edge_list = edges > 0 ? malloc(edges * 4) : NULL
+
+    if !offsets || (edges > 0 && !edge_list) {
+        print("Out of memory while loading graph")
+        free(offsets)
+        free(edge_list)
+        fclose(file)
+        return 1
+    }
 
     if fread(offsets, 8, nodes + 1, file) != nodes + 1 {
         print("Failed to read offset table")
+        free(offsets)
+        free(edge_list)
         fclose(file)
         return 1
     }
 
     if edges > 0 && fread(edge_list, 4, edges, file) != edges {
         print("Failed to read edge list")
+        free(offsets)
+        free(edge_list)
         fclose(file)
         return 1
     }
@@ -60,6 +74,8 @@ fn load_graph(string path, weird(struct Graph, 1) graph) {
 
     if offsets[nodes] != edges {
         print("Graph file corrupted")
+        free(offsets)
+        free(edge_list)
         return 1
     }
 
@@ -77,10 +93,14 @@ fn run_bfs(weird(struct Graph, 1) graph, weird(struct BFSStats, 1) stats) {
     }
 
     auto node_count = graph->num_nodes
-    weird(uint32_t, 1) queue = alloc(node_count * 4)
-    weird(int32_t, 1) distances = alloc(node_count * 4)
+    weird(uint32_t, 1) queue = malloc(node_count * 4)
+    weird(int32_t, 1) distances = malloc(node_count * 4)
 
-    if !queue || !distances return 1
+    if !queue || !distances {
+        free(queue)
+        free(distances)
+        return 1
+    }
 
     for i = 0; < node_count; ++ {
         distances[i] = -1
@@ -128,6 +148,9 @@ fn run_bfs(weird(struct Graph, 1) graph, weird(struct BFSStats, 1) stats) {
     stats->visited_nodes = visited
     stats->distance_sum = distance_sum
     stats->max_distance = max_distance
+
+    free(queue)
+    free(distances)
     return 0
 }
 
