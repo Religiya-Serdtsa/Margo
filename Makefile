@@ -52,6 +52,7 @@ src/libttak_bundle.o: $(LIBTTAK_EMBED_SRC) $(LIBTTAK_EMBED_HDR)
 clean:
 	rm -f $(MARGO_OBJS)
 	rm -rf build
+	# margo-in-margo self-compilation artifacts
 	rm -rf margo_build
 	$(MAKE) -C $(LIBTTAK_DIR) clean
 	rm -f $(LIBTTAK_EMBED_SRC) $(LIBTTAK_EMBED_HDR)
