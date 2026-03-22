@@ -1,0 +1,13 @@
+@import c/stdio.h
+@import c/string.h
+@import c/unistd.h
+@import c/errno.h
+
+@style c {
+    #include "experiment/include/margo_cli.mh"
+    #include "experiment/include/margo_delegate.mh"
+}
+
+fn int start(int argC, weird(char, 2) argV) {
+    return margo_compiler_start(argC, argV)
+}

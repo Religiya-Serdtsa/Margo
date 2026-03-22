@@ -1,0 +1,3 @@
+[submodule "deps/libttak"]
+	path = deps/libttak
+	url = https://github.com/religiya-serdtsa/libttak

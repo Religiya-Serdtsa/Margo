@@ -52,7 +52,15 @@ src/libttak_bundle.o: $(LIBTTAK_EMBED_SRC) $(LIBTTAK_EMBED_HDR)
 clean:
 	rm -f $(MARGO_OBJS)
 	rm -rf build
+	# margo-in-margo self-compilation artifacts
+	rm -rf margo_build
 	$(MAKE) -C $(LIBTTAK_DIR) clean
 	rm -f $(LIBTTAK_EMBED_SRC) $(LIBTTAK_EMBED_HDR)
 
-.PHONY: all clean
+margo-in-margo: build/margo
+	@mkdir -p margo_build
+	./build/margo build experiment/margo_compiler.margo -o margo_build/margo_stage1
+	./margo_build/margo_stage1 build experiment/margo_compiler.margo -o margo_build/margo
+	@echo "self-compilation complete: margo_build/margo"
+
+.PHONY: all clean margo-in-margo

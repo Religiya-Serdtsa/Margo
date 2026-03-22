@@ -92,6 +92,19 @@ make  # build/margo 생성
 
 `--clang <경로>` 또는 `CLANG=<경로>` 환경변수로 원하는 LLVM 툴체인을 지정할 수 있으며, IR을 확인하고 싶다면 `--emit-llvm number_baseball.ll` 옵션을 추가하면 된다.
 
+### 셀프 컴파일 실험
+
+`experiment/margo_compiler.margo`에 Margo-in-Margo 실험용 컴파일러 래퍼가 있다.
+다음 명령으로 `margo_build` 아래에 2단계 셀프 컴파일 산출물을 만들 수 있다.
+
+```bash
+make margo-in-margo
+```
+
+생성 결과:
+- `margo_build/margo_stage1` — `build/margo`로 빌드한 1단계
+- `margo_build/margo` — `margo_stage1`이 다시 빌드한 2단계
+
 ## 내장 런타임 헬퍼
 
 - `print(value1, value2, ..., sep = \" \", endl = \"\\n\")`  

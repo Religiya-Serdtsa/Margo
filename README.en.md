@@ -39,6 +39,19 @@ make
 
 Use `--clang <path>` or `CLANG=<path>` to pick a specific LLVM toolchain, and append `--emit-llvm number_baseball.ll` if you need to inspect the generated IR.
 
+### Self-compilation experiment
+
+An experimental Margo-in-Margo compiler wrapper lives at `experiment/margo_compiler.margo`.
+You can build a two-stage self-compilation artifact chain under `margo_build` with:
+
+```bash
+make margo-in-margo
+```
+
+This produces:
+- `margo_build/margo_stage1` — built by `build/margo`
+- `margo_build/margo` — rebuilt by `margo_stage1`
+
 ### Runnable Example (Number Baseball)
 
 The `examples/number_baseball` directory contains a pure Margo-style implementation of the classic bulls-and-cows game plus a Makefile that delegates to `margo build`.
