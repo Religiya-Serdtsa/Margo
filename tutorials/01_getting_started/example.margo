@@ -1,0 +1,6 @@
+@import std/io
+
+fn start(int argC, weird(char, 2) argV) {
+    print("Hello, Margo builders!")
+    return 0
+}

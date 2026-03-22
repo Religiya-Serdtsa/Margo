@@ -1,0 +1,102 @@
+@import c/stdlib
+@import c/time
+@import c/string
+@import std/io
+
+fn void generate_secret(int secret[3]) {
+    int pool[9]
+    for i=0; <9; ++ {
+        pool[i] = i + 1
+    }
+    for i=0; <3; ++ {
+        auto swap_idx = i + (rand() % (9 - i))
+        auto temp = pool[i]
+        pool[i] = pool[swap_idx]
+        pool[swap_idx] = temp
+        secret[i] = pool[i]
+    }
+}
+
+fn int parse_guess(string line, int guess[3]) {
+    int used[10]
+    for i=0; <10; ++ {
+        used[i] = 0
+    }
+    auto count = 0
+    auto length = strlen(line)
+    for idx=0; <length; ++ {
+        auto ch = line[idx]
+        if ch == '\n' break
+        if ch < '0' || ch > '9' continue
+        auto digit = ch - '0'
+        if digit == 0 || used[digit] return 0
+        used[digit] = 1
+        guess[count] = digit
+        count++
+        if count == 3 break
+    }
+    if count == 3 return 1
+    else return 0
+}
+
+fn void score_guess(const int secret[3], const int guess[3], weird(int, 1) strike, weird(int, 1) ball) {
+    *strike = 0
+    *ball = 0
+    for i=0; <3; ++ {
+        for j=0; <3; ++ {
+            if secret[i] != guess[j] continue
+            if i == j {
+                (*strike)++
+            } else {
+                (*ball)++
+            }
+        }
+    }
+}
+
+fn int start(int argC, weird(char, 2) argV) {
+    srand(time(NULL))
+    int secret[3]
+    generate_secret(secret)
+
+    print("=== 숫자 야구 (Margo Native) ===")
+    print("1~9 사이의 서로 다른 숫자 3개를 맞혀보세요.")
+
+    string line = alloc_and_init(128, "")
+    if !line return 1
+
+    auto attempts = 0
+    auto is_done = 0
+
+    while !is_done {
+        int guess[3]
+        auto valid_input = 0
+        while !valid_input {
+            print("Guess", attempts + 1, ">", endl = " ")
+            if ScanLine(line) <= 0 {
+                print("입력을 읽지 못했습니다. 종료합니다.")
+                return 1
+            }
+            if !parse_guess(line, guess) {
+                print("서로 다른 1~9 숫자 3개를 입력하세요.")
+                continue
+            }
+            valid_input = 1
+        }
+        attempts++
+        auto strike = 0
+        auto ball = 0
+        score_guess(secret, guess, &strike, &ball)
+        if strike == 3 {
+            print("정답! ", attempts, "번 만에 성공했습니다.", sep = "")
+            is_done = 1
+            continue
+        }
+        if strike == 0 && ball == 0 {
+            print("아웃!")
+        } else {
+            print(strike, "S ", ball, "B", sep = "")
+        }
+    }
+    return 0
+}

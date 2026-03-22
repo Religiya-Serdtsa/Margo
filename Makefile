@@ -1,0 +1,56 @@
+CC ?= gcc
+CFLAGS ?= -std=c17 -Wall -Wextra -pedantic -Isrc
+LDFLAGS ?=
+
+LIBTTAK_DIR := deps/libttak
+LIBTTAK_LIB := $(abspath $(LIBTTAK_DIR)/lib/libttak.a)
+LIBTTAK_BUNDLE := build/libttak_bundle.tar
+LIBTTAK_EMBED_SRC := src/libttak_bundle.c
+LIBTTAK_EMBED_HDR := src/libttak_bundle.h
+
+MARGO_SRCS = \
+	src/main.c \
+	src/diagnostics.c \
+	src/lexer.c \
+	src/parser.c \
+	src/transpiler.c \
+	src/builder.c \
+	$(LIBTTAK_EMBED_SRC)
+
+MARGO_OBJS = $(MARGO_SRCS:.c=.o)
+
+all: build/margo
+
+build/margo: $(MARGO_OBJS)
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) -o $@ $(MARGO_OBJS) $(LDFLAGS)
+
+$(LIBTTAK_LIB):
+	$(MAKE) -C $(LIBTTAK_DIR) EMBEDDED=1
+
+$(LIBTTAK_BUNDLE): $(LIBTTAK_LIB)
+	@mkdir -p $(@D)
+	tar -cf $@ -C $(LIBTTAK_DIR) include lib/libttak.a
+
+$(LIBTTAK_EMBED_SRC): $(LIBTTAK_BUNDLE)
+	@echo "Embedding libttak bundle"
+	@xxd -i $< | sed 's/unsigned /const unsigned /g' | sed 's/build_libttak_bundle_tar/libttak_bundle_tar/g' > $@
+
+$(LIBTTAK_EMBED_HDR): $(LIBTTAK_EMBED_SRC)
+	@printf "#pragma once\nextern const unsigned char libttak_bundle_tar[];\nextern const unsigned int libttak_bundle_tar_len;\n" > $@
+
+src/main.o: src/main.c
+src/diagnostics.o: src/diagnostics.c
+src/lexer.o: src/lexer.c
+src/parser.o: src/parser.c
+src/transpiler.o: src/transpiler.c
+src/builder.o: src/builder.c $(LIBTTAK_EMBED_HDR)
+src/libttak_bundle.o: $(LIBTTAK_EMBED_SRC) $(LIBTTAK_EMBED_HDR)
+
+clean:
+	rm -f $(MARGO_OBJS)
+	rm -rf build
+	$(MAKE) -C $(LIBTTAK_DIR) clean
+	rm -f $(LIBTTAK_EMBED_SRC) $(LIBTTAK_EMBED_HDR)
+
+.PHONY: all clean

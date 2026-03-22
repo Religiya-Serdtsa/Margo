@@ -1,0 +1,20 @@
+@import std/io
+
+fn start(int argC, weird(char, 2) argV) {
+    string banner = alloc_and_init(32, "managed payload")
+    if !banner {
+        print("alloc_and_init failed")
+        return 1
+    }
+
+    print("Cloned literal:", banner)
+
+    string workspace = alloc(64)
+    if workspace {
+        print("Allocated", 64, "bytes for workspace")
+    } else {
+        print("alloc() failed to return a buffer")
+    }
+
+    return 0
+}

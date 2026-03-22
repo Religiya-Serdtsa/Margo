@@ -1,0 +1,22 @@
+@import std/io
+
+@style c {
+    struct LegacyConfig {
+        int threshold;
+    };
+}
+
+@set autocorrect on
+
+fn @traceable legacy_scale(int value) {
+    if value < 0 return 0
+    else return value * 2
+}
+
+fn start(int argC, weird(char, 2) argV) {
+    struct LegacyConfig cfg = {0}
+    cfg.threshold = 21
+    auto scaled = legacy_scale(cfg.threshold)
+    print("Scaled threshold:", scaled)
+    return 0
+}

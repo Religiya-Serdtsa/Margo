@@ -1,0 +1,26 @@
+@import std/io
+
+fn start(int argC, weird(char, 2) argV) {
+    for counter=0; <3; ++ {
+        print("counter ->", counter)
+    }
+
+    auto total = 0
+    while total < 5 {
+        total += 2
+        print("running total:", total)
+    }
+
+    auto flag = 1
+    if flag == 1 print("flag matched the expected value")
+
+    auto steps = 4
+    for idx=0; <steps; ++ {
+        if idx % 2 == 0 {
+            print("even idx", idx)
+        } else {
+            print("odd idx", idx)
+        }
+    }
+    return 0
+}

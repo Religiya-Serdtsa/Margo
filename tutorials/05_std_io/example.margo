@@ -1,0 +1,21 @@
+@import std/io
+
+fn start(int argC, weird(char, 2) argV) {
+    auto age = 0
+    print("나이를 입력하세요:", endl = " ")
+    if Scan(age) == 1 {
+        print("입력된 나이:", age)
+    } else {
+        print("나이를 읽지 못했습니다.")
+        return 1
+    }
+
+    string line = alloc_and_init(128, "")
+    print("한 줄 메모를 남겨보세요:", endl = " ")
+    if ScanLine(line) > 0 {
+        print("메모:", line, sep = "")
+    } else {
+        print("입력을 받지 못했습니다.")
+    }
+    return 0
+}

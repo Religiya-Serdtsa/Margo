@@ -1,0 +1,20 @@
+@import std/io
+
+fn void describe_cli(int argC, weird(char, 2) argV) {
+    string banner = "Margo type tour"
+    auto repeat = 2
+    weird(char, 2) argv_alias = argV
+
+    print("Banner:", banner)
+    print("Argument count:", argC)
+    print("First argv entry:", argv_alias[0])
+
+    for idx=0; <repeat; ++ {
+        print("Echo", idx + 1, ":", banner)
+    }
+}
+
+fn start(int argC, weird(char, 2) argV) {
+    describe_cli(argC, argV)
+    return 0
+}
