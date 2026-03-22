@@ -44,13 +44,13 @@ fn load_graph(string path, weird(struct Graph, 1) graph) {
 
     weird(uint64_t, 1) offsets = alloc((nodes + 1) * 8)
     weird(uint32_t, 1) edge_list = alloc(edges * 4)
-    
+
     if fread(offsets, 8, nodes + 1, file) != nodes + 1 {
         print("Failed to read offset table")
         fclose(file)
         return 1
     }
-    
+
     if edges > 0 && fread(edge_list, 4, edges, file) != edges {
         print("Failed to read edge list")
         fclose(file)
@@ -75,11 +75,11 @@ fn run_bfs(weird(struct Graph, 1) graph, weird(struct BFSStats, 1) stats) {
         print("Graph is empty.")
         return 1
     }
-    
+
     auto node_count = graph->num_nodes
     weird(uint32_t, 1) queue = alloc(node_count * 4)
     weird(int32_t, 1) distances = alloc(node_count * 4)
-    
+
     if !queue || !distances return 1
 
     for i = 0; < node_count; ++ {
@@ -103,15 +103,15 @@ fn run_bfs(weird(struct Graph, 1) graph, weird(struct BFSStats, 1) stats) {
         auto node = queue[head]
         head = (head + 1 == node_count) ? 0 : (head + 1)
         size--
-        
+
         auto base_distance = distances[node]
         auto begin = graph->offsets[node]
         auto end = graph->offsets[node + 1]
-        
+
         for idx = begin; < end; ++ {
             auto neighbor = graph->edges[idx]
             if distances[neighbor] != -1 continue
-            
+
             auto next_distance = base_distance + 1
             distances[neighbor] = next_distance
             queue[tail] = neighbor
