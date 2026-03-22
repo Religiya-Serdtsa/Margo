@@ -746,8 +746,16 @@ static bool collect_fn_signature(sema_state_t *st, size_t fn_idx) {
                             margo_type_t *nt = realloc(fn.param_types, nc * sizeof(margo_type_t));
                             char       **nn = realloc(fn.param_names, nc * sizeof(char *));
                             if (!nt || !nn) {
-                                free(nt ? NULL : fn.param_types);
-                                free(nn ? NULL : fn.param_names);
+                                /* If one realloc succeeded, update the pointer so sema_func_free
+                                 * can release the correctly-reallocated block.  realloc failure
+                                 * leaves the original pointer valid, so we only need to handle
+                                 * the case where one succeeded and the other did not. */
+                                if (nt) {
+                                    fn.param_types = nt;
+                                }
+                                if (nn) {
+                                    fn.param_names = nn;
+                                }
                                 sema_func_free(&fn);
                                 sema_type_free(&ptype);
                                 free(pname);
@@ -933,7 +941,7 @@ static void check_call_arity(sema_state_t *st, size_t call_idx) {
     }
     j++;
     size_t arg_count  = 0;
-    bool   first_arg  = false;
+    bool   has_arg_content  = false;
     int    paren_depth = 1;
     while (j < st->tokens->count) {
         const token_t *t = &st->tokens->items[j];
@@ -946,8 +954,8 @@ static void check_call_arity(sema_state_t *st, size_t call_idx) {
         }
         if (token_is_symbol(t, '(')) {
             paren_depth++;
-            if (!first_arg) {
-                first_arg = true;
+            if (!has_arg_content) {
+                has_arg_content = true;
             }
             j++;
             continue;
@@ -955,7 +963,7 @@ static void check_call_arity(sema_state_t *st, size_t call_idx) {
         if (token_is_symbol(t, ')')) {
             paren_depth--;
             if (paren_depth == 0) {
-                if (first_arg) {
+                if (has_arg_content) {
                     arg_count++;
                 }
                 break;
@@ -968,8 +976,8 @@ static void check_call_arity(sema_state_t *st, size_t call_idx) {
             j++;
             continue;
         }
-        if (!first_arg) {
-            first_arg = true;
+        if (!has_arg_content) {
+            has_arg_content = true;
         }
         j++;
     }

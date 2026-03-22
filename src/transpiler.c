@@ -241,11 +241,12 @@ static bool raii_live_push(raii_live_t *live, const char *name, int depth) {
         live->items    = new_items;
         live->capacity = new_cap;
     }
-    char *copy = malloc(strlen(name) + 1);
+    size_t name_len = strlen(name);
+    char *copy = malloc(name_len + 1);
     if (!copy) {
         return false;
     }
-    strcpy(copy, name);
+    memcpy(copy, name, name_len + 1);
     live->items[live->count].name        = copy;
     live->items[live->count].scope_depth = depth;
     live->count++;
