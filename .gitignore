@@ -1,0 +1,34 @@
+# Build Artifacts
+/build/
+/target/
+/bin/
+a.out
+*.o
+*.so
+*.a
+
+/number_baseball_c
+/number_baseball_margo
+/bfs_margo
+/bfs_c
+/graph_gen
+
+# Examples & Benchmarks Outputs
+examples/bfs-bench/*.bin
+examples/bfs-bench/*.asm
+*.asm
+
+# Dependencies & Submodules
+/deps/*
+!/deps/.gitkeep
+
+# Editor & System Files
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~
+
+# Logs & Diagnostics
+*.log
+/diagnostics/
