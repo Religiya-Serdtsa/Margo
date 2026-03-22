@@ -13,6 +13,7 @@ MARGO_SRCS = \
 	src/diagnostics.c \
 	src/lexer.c \
 	src/parser.c \
+	src/sema.c \
 	src/transpiler.c \
 	src/builder.c \
 	$(LIBTTAK_EMBED_SRC)
@@ -43,6 +44,7 @@ src/main.o: src/main.c
 src/diagnostics.o: src/diagnostics.c
 src/lexer.o: src/lexer.c
 src/parser.o: src/parser.c
+src/sema.o: src/sema.c src/sema.h src/lexer.h src/diagnostics.h
 src/transpiler.o: src/transpiler.c
 src/builder.o: src/builder.c $(LIBTTAK_EMBED_HDR)
 src/libttak_bundle.o: $(LIBTTAK_EMBED_SRC) $(LIBTTAK_EMBED_HDR)

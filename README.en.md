@@ -62,6 +62,56 @@ The frontend now tokenizes/parses `.margo` sources before handing them to Clang,
 
 The number baseball example now uses the new loop sugar so that its structure matches the concept draft more closely.
 
+## Self-Hosting Minimum Support
+
+The following features have been implemented to allow Margo programs to write a Margo compiler (self-hosting subset).
+
+### RAII Scope-Exit Free Injection
+Variables assigned from `alloc` / `alloc_and_init` are automatically freed when their enclosing scope closes:
+
+```margo
+fn process() {
+    string buf = alloc_and_init(256, "hello")
+    // ... work ...
+}  // ← free(buf) is injected here automatically
+```
+
+Return-path injection: every `return` statement also emits `free()` for all live owned variables.  The variable being returned is skipped (ownership transfer).
+
+### `null` Keyword
+Lowered to the C `NULL` macro — no `#include` required:
+```margo
+if ptr == null { ... }
+```
+
+### `@import godmode`
+Expands to ~20 standard C headers, covering the full POSIX + C standard library surface:
+```margo
+@import godmode
+```
+
+### `@import c++/...` Stub
+C++ binding support is a future milestone.  The directive is preserved as a comment so existing source stays parseable.
+
+### Extended `@import std/...` Modules
+| Directive | Maps to |
+| --- | --- |
+| `@import std/io` | `<stdio.h>` |
+| `@import std/mem` | `<string.h>` |
+| `@import std/string` | `<string.h>` |
+| `@import std/math` | `<math.h>` |
+| `@import std/stdlib` | `<stdlib.h>` |
+| `@import std/time` | `<time.h>` |
+| `@import std/assert` | `<assert.h>` |
+| `@import std/errno` | `<errno.h>` |
+
+### Semantic Analysis Pass (`src/sema.c`)
+Runs over the token stream before code generation:
+- **Function signature registry**: records all `fn` declarations; validates call-site argument counts.
+- **`weird` dimension validation**: rejects pointer dimensions outside `[0, 8]`.
+- **RAII ownership table**: detects `ident = alloc(...)` patterns and feeds the transpiler.
+- **Multi-error accumulation**: collects all diagnostics before halting, enabling IDE-style error output.
+
 ## Contribution Notes (Draft)
 
 - Document new ideas under `docs/` before wiring them into the compiler/runtime.

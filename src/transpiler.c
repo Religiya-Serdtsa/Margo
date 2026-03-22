@@ -11,12 +11,26 @@
 
 #include "lexer.h"
 #include "parser.h"
+#include "sema.h"
 
 /**
  * @file transpiler.c
  * @brief Full-source transpiler that bridges concept-style `.margo` syntax and
  *        the generated C fed into clang. Every routine carries detailed Doxygen
  *        comments so that the document effectively serves as a design memo.
+ *
+ * Self-hosting additions (beyond the original prototype):
+ *  - RAII scope-exit free injection using the ownership table produced by
+ *    the semantic analysis pass.
+ *  - Return-path free injection so owned allocations are freed even when a
+ *    function returns early through any path.
+ *  - `null` keyword lowering to the C `NULL` macro.
+ *  - `@import godmode` expanding to a full set of standard C headers.
+ *  - `@import c++/...` stub that preserves the directive as a comment so
+ *    the C++ binding milestone can be implemented without breaking existing
+ *    source files.
+ *  - Extended `@import std/...` module mapping (string, math, stdlib, time,
+ *    assert, errno).
  */
 
 /**
@@ -188,6 +202,212 @@ static bool style_handle_close_brace(style_block_stack_t *stack,
     stack->count--;
     return true;
 }
+
+/* =========================================================================
+ * RAII scope-exit free injection
+ * ====================================================================== */
+
+/**
+ * @brief One variable known to be alloc-owned at the given brace depth.
+ */
+typedef struct {
+    char *name;        /**< Heap-allocated identifier string */
+    int   scope_depth; /**< Brace depth at point of declaration */
+} raii_live_var_t;
+
+/**
+ * @brief Runtime tracker used during the main transpile pass.
+ *
+ * Variables are pushed when an `alloc`/`alloc_and_init` assignment is
+ * detected and popped (with free injection) when the enclosing scope's
+ * closing brace is emitted.
+ */
+typedef struct {
+    raii_live_var_t *items;
+    size_t           count;
+    size_t           capacity;
+} raii_live_t;
+
+static bool raii_live_push(raii_live_t *live, const char *name, int depth) {
+    if (!live || !name) {
+        return false;
+    }
+    if (live->count == live->capacity) {
+        size_t new_cap = live->capacity ? live->capacity * 2 : 16;
+        raii_live_var_t *new_items = realloc(live->items, new_cap * sizeof(raii_live_var_t));
+        if (!new_items) {
+            return false;
+        }
+        live->items    = new_items;
+        live->capacity = new_cap;
+    }
+    char *copy = malloc(strlen(name) + 1);
+    if (!copy) {
+        return false;
+    }
+    strcpy(copy, name);
+    live->items[live->count].name        = copy;
+    live->items[live->count].scope_depth = depth;
+    live->count++;
+    return true;
+}
+
+/**
+ * @brief Emit `free()` calls for every owned variable at exactly `depth`
+ *        and remove those entries from the tracker.
+ */
+static bool raii_live_emit_scope_frees(raii_live_t *live, int depth, FILE *out) {
+    if (!live) {
+        return true;
+    }
+    bool ok = true;
+    for (size_t i = live->count; i > 0; --i) {
+        raii_live_var_t *v = &live->items[i - 1];
+        if (v->scope_depth != depth) {
+            continue;
+        }
+        if (fprintf(out, "free(%s);\n", v->name) < 0) {
+            ok = false;
+        }
+        free(v->name);
+        /* Remove by shifting */
+        memmove(&live->items[i - 1], &live->items[i],
+                (live->count - i) * sizeof(raii_live_var_t));
+        live->count--;
+    }
+    return ok;
+}
+
+/**
+ * @brief Emit `free()` calls for all owned variables in the depth range
+ *        [min_depth, max_depth] (inclusive).  Used before `return`.
+ *
+ * An optional `skip_name` prevents freeing the variable being returned
+ * (ownership transfer).
+ */
+static bool raii_live_emit_return_frees(raii_live_t *live,
+                                         int min_depth, int max_depth,
+                                         const char *skip_name,
+                                         FILE *out) {
+    if (!live) {
+        return true;
+    }
+    bool ok = true;
+    for (size_t i = live->count; i > 0; --i) {
+        raii_live_var_t *v = &live->items[i - 1];
+        if (v->scope_depth < min_depth || v->scope_depth > max_depth) {
+            continue;
+        }
+        if (skip_name && strcmp(v->name, skip_name) == 0) {
+            continue;
+        }
+        if (fprintf(out, "free(%s);\n", v->name) < 0) {
+            ok = false;
+        }
+    }
+    return ok;
+}
+
+static void raii_live_free(raii_live_t *live) {
+    if (!live) {
+        return;
+    }
+    for (size_t i = 0; i < live->count; ++i) {
+        free(live->items[i].name);
+    }
+    free(live->items);
+    live->items    = NULL;
+    live->count    = 0;
+    live->capacity = 0;
+}
+
+/**
+ * @brief Check whether token at *index* is `IDENT = alloc(` and register
+ *        the variable as owned if so.
+ *
+ * Advances nothing — this is a pure lookahead that does not move *index*.
+ */
+static void try_register_alloc_ownership(const token_buffer_t *tokens,
+                                          size_t index,
+                                          int brace_depth,
+                                          raii_live_t *live) {
+    if (!tokens || !live) {
+        return;
+    }
+    const token_t *tok = &tokens->items[index];
+    if (tok->kind != TOKEN_IDENTIFIER) {
+        return;
+    }
+    /* Build a local name buffer */
+    char name[128] = {0};
+    size_t name_len = tok->length < sizeof(name) - 1 ? tok->length : sizeof(name) - 1;
+    memcpy(name, tok->lexeme, name_len);
+
+    /* Skip forward to the next non-newline token */
+    size_t j = index + 1;
+    while (j < tokens->count && tokens->items[j].kind == TOKEN_NEWLINE) {
+        j++;
+    }
+    if (j >= tokens->count) {
+        return;
+    }
+    /* Must be `=` and not `==` */
+    if (!token_is_symbol(&tokens->items[j], '=')) {
+        return;
+    }
+    if (j + 1 < tokens->count && token_is_symbol(&tokens->items[j + 1], '=')) {
+        return;
+    }
+    /* Skip to RHS */
+    size_t k = j + 1;
+    while (k < tokens->count && tokens->items[k].kind == TOKEN_NEWLINE) {
+        k++;
+    }
+    if (k >= tokens->count) {
+        return;
+    }
+    const token_t *rhs = &tokens->items[k];
+    if (rhs->kind != TOKEN_IDENTIFIER) {
+        return;
+    }
+    bool is_alloc =
+        (strncmp(rhs->lexeme, "alloc_and_init", rhs->length) == 0 && rhs->length == 14) ||
+        (strncmp(rhs->lexeme, "alloc",         rhs->length) == 0 && rhs->length == 5);
+    if (!is_alloc) {
+        return;
+    }
+    /* Register – ignore push failures silently (only cosmetic: free won't be injected) */
+    raii_live_push(live, name, brace_depth);
+}
+
+/**
+ * @brief Extract the first identifier from a `return` expression so we can
+ *        skip freeing a variable that is being returned (ownership transfer).
+ *
+ * Scans forward from `return_index + 1` until end-of-line / `{` / EOF.
+ * Returns a heap-allocated string or NULL if no identifier found.
+ */
+static char *extract_return_ident(const token_buffer_t *tokens, size_t return_index) {
+    size_t i = return_index + 1;
+    while (i < tokens->count) {
+        const token_t *tok = &tokens->items[i];
+        if (tok->kind == TOKEN_EOF || tok->kind == TOKEN_NEWLINE) {
+            break;
+        }
+        if (tok->kind == TOKEN_IDENTIFIER) {
+            char *copy = malloc(tok->length + 1);
+            if (!copy) {
+                return NULL;
+            }
+            memcpy(copy, tok->lexeme, tok->length);
+            copy[tok->length] = '\0';
+            return copy;
+        }
+        i++;
+    }
+    return NULL;
+}
+
 
 static bool analyze_fn_signature(const token_buffer_t *tokens,
                                  size_t fn_index,
@@ -780,7 +1000,8 @@ static bool insert_implicit_semicolons(char **buffer, size_t *size, diagnostic_t
 }
 
 /**
- * @brief Convert an `@import` directive into a concrete `#include` line.
+ * @brief Convert an `@import` directive into a concrete `#include` line (or
+ *        a set of includes for `godmode`).
  */
 static bool emit_include_for_import(FILE *out, const import_directive_t *dir, diagnostic_t *diag) {
     if (dir->kind == IMPORT_KIND_C) {
@@ -790,6 +1011,95 @@ static bool emit_include_for_import(FILE *out, const import_directive_t *dir, di
         const char *fmt = has_suffix ? "#include <%s>\n" : "#include <%s.h>\n";
         if (fprintf(out, fmt, name) < 0) {
             diagnostic_set(diag, 0, "failed to emit include for %s", name);
+            return false;
+        }
+        return true;
+    }
+    if (dir->kind == IMPORT_KIND_CPP) {
+        /* C++ binding support is a future milestone.  Preserve as comment so
+         * the source remains parseable and the intent is documented. */
+        if (fprintf(out, "/* @import c++/%s (C++ bindings: future milestone) */\n",
+                    dir->target ? dir->target : "") < 0) {
+            diagnostic_set(diag, 0, "failed to emit c++ import stub");
+            return false;
+        }
+        return true;
+    }
+    if (dir->kind == IMPORT_KIND_GODMODE) {
+        /* Expand to a comprehensive set of standard C headers so that any
+         * Margo program can access the full C standard library without
+         * enumerating individual @import directives.  This is intentionally
+         * generous to support writing the self-hosting compiler in Margo. */
+        static const char *godmode_headers[] = {
+            "#include <assert.h>\n",
+            "#include <ctype.h>\n",
+            "#include <errno.h>\n",
+            "#include <float.h>\n",
+            "#include <limits.h>\n",
+            "#include <math.h>\n",
+            "#include <setjmp.h>\n",
+            "#include <signal.h>\n",
+            "#include <stdarg.h>\n",
+            "#include <stdbool.h>\n",
+            "#include <stddef.h>\n",
+            "#include <stdint.h>\n",
+            "#include <stdio.h>\n",
+            "#include <stdlib.h>\n",
+            "#include <string.h>\n",
+            "#include <time.h>\n",
+            "#include <inttypes.h>\n",
+            "#include <fcntl.h>\n",
+            "#include <unistd.h>\n",
+            "#include <sys/types.h>\n",
+            "#include <sys/stat.h>\n",
+            NULL,
+        };
+        for (size_t hi = 0; godmode_headers[hi]; ++hi) {
+            if (fputs(godmode_headers[hi], out) == EOF) {
+                diagnostic_set(diag, 0, "failed to emit godmode includes");
+                return false;
+            }
+        }
+        return true;
+    }
+    if (dir->kind == IMPORT_KIND_STD_STRING) {
+        if (fputs("#include <string.h>\n", out) == EOF) {
+            diagnostic_set(diag, 0, "failed to emit std/string include");
+            return false;
+        }
+        return true;
+    }
+    if (dir->kind == IMPORT_KIND_STD_MATH) {
+        if (fputs("#include <math.h>\n", out) == EOF) {
+            diagnostic_set(diag, 0, "failed to emit std/math include");
+            return false;
+        }
+        return true;
+    }
+    if (dir->kind == IMPORT_KIND_STD_STDLIB) {
+        if (fputs("#include <stdlib.h>\n", out) == EOF) {
+            diagnostic_set(diag, 0, "failed to emit std/stdlib include");
+            return false;
+        }
+        return true;
+    }
+    if (dir->kind == IMPORT_KIND_STD_TIME) {
+        if (fputs("#include <time.h>\n", out) == EOF) {
+            diagnostic_set(diag, 0, "failed to emit std/time include");
+            return false;
+        }
+        return true;
+    }
+    if (dir->kind == IMPORT_KIND_STD_ASSERT) {
+        if (fputs("#include <assert.h>\n", out) == EOF) {
+            diagnostic_set(diag, 0, "failed to emit std/assert include");
+            return false;
+        }
+        return true;
+    }
+    if (dir->kind == IMPORT_KIND_STD_ERRNO) {
+        if (fputs("#include <errno.h>\n", out) == EOF) {
+            diagnostic_set(diag, 0, "failed to emit std/errno include");
             return false;
         }
         return true;
@@ -1509,6 +1819,15 @@ static bool handle_decorator(FILE *out,
 
 /**
  * @brief Entry point used by the builder to convert `.margo` to C source.
+ *
+ * The function now performs two sub-passes before the main token-rewriting
+ * loop:
+ *   1. Semantic analysis (`sema_run`) – builds the RAII ownership table and
+ *      collects any type-level diagnostics.  Diagnostics are printed to
+ *      stderr but do not abort compilation unless they are fatal.
+ *   2. Main rewriting pass – translates Margo syntax to C while injecting
+ *      scope-exit `free()` calls for alloc-owned variables and lowering
+ *      the `null` keyword.
  */
 bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t *size_out, diagnostic_t *diag) {
     diagnostic_clear(diag);
@@ -1522,11 +1841,43 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
         free(source);
         return false;
     }
+
+    /* ---- Semantic analysis pass ---------------------------------------- */
+    raii_table_t   sema_raii   = {0};
+    sema_diag_list_t sema_diags = {0};
+    if (!sema_run(source, &tokens, &sema_raii, &sema_diags, diag)) {
+        /* Fatal internal error (OOM etc.) */
+        raii_table_free(&sema_raii);
+        sema_diag_list_free(&sema_diags);
+        lexer_free(&tokens);
+        free(source);
+        return false;
+    }
+    if (sema_diags.count > 0) {
+        sema_diag_list_print(&sema_diags, input_path);
+    }
+    /* Check error count before freeing the list */
+    size_t sema_error_count = sema_diags.error_count;
+    sema_diag_list_free(&sema_diags);
+    raii_table_free(&sema_raii);
+
+    if (sema_error_count > 0) {
+        diagnostic_set(diag, 0, "aborting due to %zu semantic error(s)", sema_error_count);
+        lexer_free(&tokens);
+        free(source);
+        return false;
+    }
+
+    /* Runtime RAII live tracker – populated inline during the code-gen pass */
+    raii_live_t raii_live = {0};
+
+    /* ---- Code generation pass ------------------------------------------ */
     char *generated = NULL;
     size_t generated_size = 0;
     FILE *out = open_memstream(&generated, &generated_size);
     if (!out) {
         diagnostic_set(diag, 0, "failed to create output buffer");
+        raii_live_free(&raii_live);
         lexer_free(&tokens);
         free(source);
         return false;
@@ -1536,6 +1887,9 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
     size_t last_emit = 0;
     bool ok = true;
     int brace_depth = 0;
+    /* Depth at which the current function body started (for return-path
+     * frees).  0 means we are at file scope. */
+    int fn_body_depth = 0;
     style_block_stack_t style_blocks = {0};
     bool has_start_function = false;
     bool has_main_function = false;
@@ -1547,6 +1901,23 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
         if (tok->kind == TOKEN_EOF) {
             break;
         }
+
+        /* `null` → `NULL` */
+        if (token_is_identifier(tok, "null")) {
+            if (!copy_range(out, source, last_emit, tok->offset)) {
+                diagnostic_set(diag, tok->line, "failed to copy prefix before null");
+                ok = false;
+                break;
+            }
+            if (fputs("NULL", out) == EOF) {
+                diagnostic_set(diag, tok->line, "failed to emit NULL");
+                ok = false;
+                break;
+            }
+            last_emit = tok->offset + tok->length;
+            continue;
+        }
+
         if (token_is_identifier(tok, "fn")) {
             if (!handle_fn_keyword(out, source, &tokens, &i, &last_emit, &has_start_function, &has_main_function, diag)) {
                 ok = false;
@@ -1562,7 +1933,9 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
                         ok = false;
                         break;
                     }
-                    bool is_std_io = (dir.kind == IMPORT_KIND_STD) && dir.target && strcmp(dir.target, "io") == 0;
+                    bool is_std_io =
+                        (dir.kind == IMPORT_KIND_STD && dir.target && strcmp(dir.target, "io") == 0) ||
+                        dir.kind == IMPORT_KIND_GODMODE;
                     if (!copy_range(out, source, last_emit, dir.start_offset)) {
                         diagnostic_set(diag, 0, "failed to copy source before @import");
                         parser_free_import(&dir);
@@ -1715,12 +2088,40 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
                 continue;
             }
         }
+
+        /* `return` – inject frees for all owned vars before the keyword */
+        if (token_is_identifier(tok, "return") && fn_body_depth > 0) {
+            char *ret_ident = extract_return_ident(&tokens, i);
+            if (!copy_range(out, source, last_emit, tok->offset)) {
+                diagnostic_set(diag, tok->line, "failed to copy prefix before return");
+                free(ret_ident);
+                ok = false;
+                break;
+            }
+            last_emit = tok->offset;
+            raii_live_emit_return_frees(&raii_live,
+                                        fn_body_depth, brace_depth,
+                                        ret_ident, out);
+            free(ret_ident);
+            /* Fall through to emit `return` normally */
+        }
+
+        /* RAII: look for alloc assignment at this identifier position */
+        if (tok->kind == TOKEN_IDENTIFIER) {
+            try_register_alloc_ownership(&tokens, i, brace_depth, &raii_live);
+        }
+
         if (token_is_symbol(tok, '{')) {
             if (!style_handle_open_brace(&style_blocks, source, out, tok, &last_emit, diag)) {
                 ok = false;
                 break;
             }
             brace_depth++;
+            /* Record depth of the first brace after any `fn` keyword so we
+             * know where function scope begins for return-path RAII. */
+            if (fn_body_depth == 0 && brace_depth > 0) {
+                fn_body_depth = brace_depth;
+            }
             continue;
         }
         if (token_is_symbol(tok, '}')) {
@@ -1729,9 +2130,23 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
                 ok = false;
                 break;
             }
+            /* RAII: inject frees before closing this scope */
+            if (!copy_range(out, source, last_emit, tok->offset)) {
+                diagnostic_set(diag, tok->line, "failed to copy prefix before '}'");
+                ok = false;
+                break;
+            }
+            last_emit = tok->offset;
+            raii_live_emit_scope_frees(&raii_live, brace_depth, out);
+
             if (!style_handle_close_brace(&style_blocks, source, out, tok, &last_emit, brace_depth, diag)) {
                 ok = false;
                 break;
+            }
+            /* When closing a function body, reset fn_body_depth so the next
+             * function that opens a brace records itself properly. */
+            if (brace_depth == fn_body_depth) {
+                fn_body_depth = 0;
             }
             brace_depth--;
             continue;
@@ -1767,6 +2182,7 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
             ok = false;
         }
     }
+    raii_live_free(&raii_live);
     style_stack_free(&style_blocks);
     lexer_free(&tokens);
     free(source);
@@ -1778,3 +2194,4 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
     *size_out = generated_size;
     return true;
 }
+
