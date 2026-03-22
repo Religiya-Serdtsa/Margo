@@ -25,6 +25,56 @@
 
 1차 목표는 사양을 문서화하고 구현 단계를 정의하는 것이다. `TODO.md`에 다음 단계가 정리되어 있으며, 완료된 항목에는 `[v]`를 표시한다.
 
+## 셀프 컴파일 최소 지원 (Self-Hosting Minimum)
+
+Margo가 자기 자신을 컴파일하기 위해 필요한 최소 기능들이 구현되었다.
+
+### RAII 스코프 해제 주입
+`alloc` / `alloc_and_init`으로 할당된 변수는 블록(`{}`) 종료 시 컴파일러가 자동으로 `free()`를 삽입한다.
+
+```margo
+fn process() {
+    string buf = alloc_and_init(256, "hello")
+    // ... 처리 로직 ...
+}  // ← 여기서 free(buf)가 자동 삽입됨
+```
+
+`return` 문 전에도 모든 소유 변수에 대해 `free()`가 주입된다. 반환되는 변수(소유권 이전)는 제외.
+
+### `null` 키워드
+C의 `NULL`로 직접 변환된다:
+```margo
+if ptr == null { ... }
+```
+
+### `@import godmode`
+모든 표준 C 헤더를 한 번에 가져온다. 컴파일러 구현 같은 시스템 프로그램 작성 시 유용하다:
+```margo
+@import godmode
+```
+
+### `@import c++/...` 스텁
+C++ 바인딩 지원은 향후 마일스톤이다. 지시자는 주석으로 보존된다.
+
+### 확장된 `@import std/...` 모듈
+| 지시자 | 매핑 |
+| --- | --- |
+| `@import std/io` | `<stdio.h>` |
+| `@import std/mem` | `<string.h>` |
+| `@import std/string` | `<string.h>` |
+| `@import std/math` | `<math.h>` |
+| `@import std/stdlib` | `<stdlib.h>` |
+| `@import std/time` | `<time.h>` |
+| `@import std/assert` | `<assert.h>` |
+| `@import std/errno` | `<errno.h>` |
+
+### 의미 분석 패스 (`src/sema.c`)
+컴파일 전에 토큰 스트림을 분석한다:
+- **함수 시그니처 레지스트리**: 모든 `fn` 선언 기록, 호출 위치에서 인자 수 검증.
+- **`weird` 차원 검증**: 포인터 차원이 [0, 8] 범위를 벗어나면 오류.
+- **RAII 소유권 테이블**: `ident = alloc(...)` 패턴 감지, 트랜스파일러에 전달.
+- **다중 오류 누적**: 첫 번째 오류에서 멈추지 않고 모든 오류를 수집해 한꺼번에 출력.
+
 ## 빠른 시작 (LLVM 기반 빌드)
 
 `build/margo` 바이너리는 `.margo` 소스에서 지시자(`@import`, `@set` 등)만 얇게 정규화한 뒤, 나머지 코드를 그대로 LLVM `clang` 프런트엔드로 넘겨 IR 혹은 네이티브 바이너리를 만든다. 추가 구문(`fn`, `auto`, `weird`)은 런타임 전처리 매크로로 확장되므로 별도의 C 소스 파일이 생성되지 않는다. 현재 지원되는 축약 문법은 다음과 같다.

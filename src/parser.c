@@ -327,6 +327,30 @@ bool parser_parse_import(const char *source,
     if (strncmp(sanitized, "c/", 2) == 0) {
         kind = IMPORT_KIND_C;
         payload = sanitized + 2;
+    } else if (strncmp(sanitized, "c++/", 4) == 0) {
+        kind = IMPORT_KIND_CPP;
+        payload = sanitized + 4;
+    } else if (strncmp(sanitized, "godmode", 7) == 0 && sanitized[7] == '\0') {
+        kind = IMPORT_KIND_GODMODE;
+        payload = "";
+    } else if (strncmp(sanitized, "std/string", 10) == 0 && sanitized[10] == '\0') {
+        kind = IMPORT_KIND_STD_STRING;
+        payload = "string";
+    } else if (strncmp(sanitized, "std/math", 8) == 0 && sanitized[8] == '\0') {
+        kind = IMPORT_KIND_STD_MATH;
+        payload = "math";
+    } else if (strncmp(sanitized, "std/stdlib", 10) == 0 && sanitized[10] == '\0') {
+        kind = IMPORT_KIND_STD_STDLIB;
+        payload = "stdlib";
+    } else if (strncmp(sanitized, "std/time", 8) == 0 && sanitized[8] == '\0') {
+        kind = IMPORT_KIND_STD_TIME;
+        payload = "time";
+    } else if (strncmp(sanitized, "std/assert", 10) == 0 && sanitized[10] == '\0') {
+        kind = IMPORT_KIND_STD_ASSERT;
+        payload = "assert";
+    } else if (strncmp(sanitized, "std/errno", 9) == 0 && sanitized[9] == '\0') {
+        kind = IMPORT_KIND_STD_ERRNO;
+        payload = "errno";
     } else if (strncmp(sanitized, "std/", 4) == 0) {
         kind = IMPORT_KIND_STD;
         payload = sanitized + 4;
@@ -335,7 +359,7 @@ bool parser_parse_import(const char *source,
         free(sanitized);
         return false;
     }
-    if (!*payload) {
+    if (!*payload && kind != IMPORT_KIND_GODMODE) {
         diagnostic_set(diag, at->line, "@import target is empty");
         free(sanitized);
         return false;

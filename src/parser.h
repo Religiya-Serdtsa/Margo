@@ -14,10 +14,29 @@
 
 /**
  * @brief Supported prefixes for `@import` directives.
+ *
+ * New kinds added for self-hosting support:
+ *  - IMPORT_KIND_CPP     maps `@import c++/...` to a stub comment (C++ ABI
+ *                        support is a future milestone).
+ *  - IMPORT_KIND_GODMODE enables all common standard C headers in one shot.
+ *  - IMPORT_KIND_STD_STRING  maps `@import std/string`  -> <string.h>
+ *  - IMPORT_KIND_STD_MATH    maps `@import std/math`    -> <math.h>
+ *  - IMPORT_KIND_STD_STDLIB  maps `@import std/stdlib`  -> <stdlib.h>
+ *  - IMPORT_KIND_STD_TIME    maps `@import std/time`    -> <time.h>
+ *  - IMPORT_KIND_STD_ASSERT  maps `@import std/assert`  -> <assert.h>
+ *  - IMPORT_KIND_STD_ERRNO   maps `@import std/errno`   -> <errno.h>
  */
 typedef enum {
     IMPORT_KIND_C,
     IMPORT_KIND_STD,
+    IMPORT_KIND_CPP,
+    IMPORT_KIND_GODMODE,
+    IMPORT_KIND_STD_STRING,
+    IMPORT_KIND_STD_MATH,
+    IMPORT_KIND_STD_STDLIB,
+    IMPORT_KIND_STD_TIME,
+    IMPORT_KIND_STD_ASSERT,
+    IMPORT_KIND_STD_ERRNO,
 } import_kind_t;
 
 /**
