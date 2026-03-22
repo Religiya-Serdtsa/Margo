@@ -3,10 +3,26 @@ static int margo_delegate_build(int argc, char **argv) {
         fprintf(stderr, "margo-in-margo: invalid argv for delegation\n");
         return 1;
     }
-    const char *fallback = "./build/margo-c";
     const char *target = getenv("MARGO_BOOTSTRAP");
+    char target_buf[4096];
     if (!target || target[0] == '\0') {
-        target = fallback;
+        ssize_t n = readlink("/proc/self/exe", target_buf, sizeof(target_buf) - 1);
+        if (n > 0) {
+            target_buf[n] = '\0';
+            char *last_slash = strrchr(target_buf, '/');
+            if (last_slash != NULL) {
+                *last_slash = '\0';
+                size_t base_len = strlen(target_buf);
+                const char *suffix = "/../build/margo-c";
+                if (base_len + strlen(suffix) + 1 < sizeof(target_buf)) {
+                    strcat(target_buf, suffix);
+                    target = target_buf;
+                }
+            }
+        }
+    }
+    if (!target || target[0] == '\0') {
+        target = "./build/margo-c";
     }
     argv[0] = (char *)target;
     execv(target, argv);
