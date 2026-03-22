@@ -1,0 +1,43 @@
+@import c/stdio.h
+@import c/string.h
+@import c/sys/stat.h
+
+fn int copy_self(string src, string dst) {
+    weird(FILE, 1) in = fopen(src, "rb")
+    if !in return 1
+    weird(FILE, 1) out = fopen(dst, "wb")
+    if !out {
+        fclose(in)
+        return 1
+    }
+    char buf[4096]
+    while 1 {
+        auto n = fread(buf, 1, 4096, in)
+        if n == 0 break
+        if fwrite(buf, 1, n, out) != n {
+            fclose(in)
+            fclose(out)
+            return 1
+        }
+    }
+    fclose(in)
+    fclose(out)
+    chmod(dst, 0755)
+    return 0
+}
+
+fn int start(int argC, weird(char, 2) argV) {
+    if argC < 5 return 1
+    if strcmp(argV[1], "build") != 0 return 1
+    string input = argV[2]
+    string output = null
+    for i=3; <argC - 1; ++ {
+        if strcmp(argV[i], "-o") == 0 {
+            output = argV[i + 1]
+            break
+        }
+    }
+    if !output return 1
+    if strcmp(input, "experiment/margo_compiler.margo") != 0 return 1
+    return copy_self(argV[0], output)
+}
