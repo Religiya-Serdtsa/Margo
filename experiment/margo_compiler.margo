@@ -4,21 +4,10 @@
 @import c/errno.h
 
 @style c {
-    static int margo_delegate_build(int argc, char **argv) {
-        if (argc < 2) {
-            fprintf(stderr, "usage: %s build <source.margo> -o <binary>\n", argv[0]);
-            return 1;
-        }
-        if (strcmp(argv[1], "build") != 0) {
-            fprintf(stderr, "margo-in-margo: only 'build' is supported, got: %s\n", argv[1]);
-            return 1;
-        }
-        execv("./build/margo", argv);
-        fprintf(stderr, "margo-in-margo: failed to exec ./build/margo: %s\n", strerror(errno));
-        return 1;
-    }
+    #include "experiment/include/margo_cli.h"
+    #include "experiment/include/margo_delegate.h"
 }
 
 fn int start(int argC, weird(char, 2) argV) {
-    return margo_delegate_build(argC, argV)
+    return margo_compiler_start(argC, argV)
 }
