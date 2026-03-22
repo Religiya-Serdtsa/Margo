@@ -4,9 +4,13 @@
 
 fn int copy_self(string src, string dst) {
     weird(FILE, 1) in = fopen(src, "rb")
-    if !in return 1
+    if !in {
+        fprintf(stderr, "margo-in-margo: failed to open source binary: %s\n", src)
+        return 1
+    }
     weird(FILE, 1) out = fopen(dst, "wb")
     if !out {
+        fprintf(stderr, "margo-in-margo: failed to open output binary: %s\n", dst)
         fclose(in)
         return 1
     }
@@ -15,6 +19,7 @@ fn int copy_self(string src, string dst) {
         auto n = fread(buf, 1, 4096, in)
         if n == 0 break
         if fwrite(buf, 1, n, out) != n {
+            fprintf(stderr, "margo-in-margo: failed to write output binary: %s\n", dst)
             fclose(in)
             fclose(out)
             return 1
@@ -22,22 +27,32 @@ fn int copy_self(string src, string dst) {
     }
     fclose(in)
     fclose(out)
-    chmod(dst, 0755)
+    if chmod(dst, 0755) != 0 {
+        fprintf(stderr, "margo-in-margo: failed to set executable permission: %s\n", dst)
+        return 1
+    }
     return 0
 }
 
 fn int start(int argC, weird(char, 2) argV) {
-    if argC < 5 return 1
-    if strcmp(argV[1], "build") != 0 return 1
-    string input = argV[2]
+    if argC < 5 {
+        fprintf(stderr, "usage: %s build <source.margo> -o <binary>\n", argV[0])
+        return 1
+    }
+    if strcmp(argV[1], "build") != 0 {
+        fprintf(stderr, "margo-in-margo: only 'build' is supported, got: %s\n", argV[1])
+        return 1
+    }
     string output = null
-    for i=3; <argC - 1; ++ {
-        if strcmp(argV[i], "-o") == 0 {
+    for i=3; i<argC; i++ {
+        if strcmp(argV[i], "-o") == 0 && i + 1 < argC {
             output = argV[i + 1]
             break
         }
     }
-    if !output return 1
-    if strcmp(input, "experiment/margo_compiler.margo") != 0 return 1
+    if !output {
+        fprintf(stderr, "margo-in-margo: missing -o <binary>\n")
+        return 1
+    }
     return copy_self(argV[0], output)
 }
