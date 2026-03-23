@@ -1,5 +1,6 @@
 bfs_c
 bfs_margo
+bfs_bench_safe
 graph_gen
 graph.bin
 __pycache__/
