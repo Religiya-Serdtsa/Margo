@@ -42,8 +42,8 @@ fn load_graph(string path, weird(struct Graph, 1) graph) {
         return 1
     }
 
-    graph->offsets = alloc((nodes + 1) * 8)
-    graph->edges = edges > 0 ? alloc(edges * 4) : NULL
+    graph->offsets = alloc((nodes + 1) * sizeof(uint64_t))
+    graph->edges = edges > 0 ? alloc(edges * sizeof(uint32_t)) : NULL
 
     if !graph->offsets || (edges > 0 && !graph->edges) {
         print("Out of memory while loading graph")
@@ -81,8 +81,8 @@ fn run_bfs(weird(struct Graph, 1) graph, weird(struct BFSStats, 1) stats) {
     }
 
     auto node_count = graph->num_nodes
-    weird(uint32_t, 1) queue = alloc(node_count * 4)
-    weird(int32_t, 1) distances = alloc(node_count * 4)
+    weird(uint32_t, 1) queue = alloc(node_count * sizeof(uint32_t))
+    weird(int32_t, 1) distances = alloc(node_count * sizeof(int32_t))
 
     if !queue || !distances {
         return 1
