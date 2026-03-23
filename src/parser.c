@@ -351,6 +351,9 @@ bool parser_parse_import(const char *source,
     } else if (strncmp(sanitized, "std/errno", 9) == 0 && sanitized[9] == '\0') {
         kind = IMPORT_KIND_STD_ERRNO;
         payload = "errno";
+    } else if (strncmp(sanitized, "std/file", 8) == 0 && sanitized[8] == '\0') {
+        kind = IMPORT_KIND_STD_FILE;
+        payload = "file";
     } else if (strncmp(sanitized, "std/", 4) == 0) {
         kind = IMPORT_KIND_STD;
         payload = sanitized + 4;

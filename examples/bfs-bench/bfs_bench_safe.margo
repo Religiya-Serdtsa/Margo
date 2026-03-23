@@ -1,10 +1,10 @@
-@import c/errno.h
-@import c/inttypes.h
-@import c/stdio.h
-@import c/stdlib.h
-@import c/string.h
+@import std/io
+@import std/file
+@import std/string
 
 @style c {
+    typedef struct FILE FILE;
+
     struct Graph {
         uint32_t num_nodes;
         uint64_t num_edges;
@@ -17,6 +17,31 @@
         uint64_t distance_sum;
         int32_t max_distance;
     };
+
+    extern FILE *fopen(const char *path, const char *mode);
+    extern int fclose(FILE *stream);
+    extern size_t fread(void *ptr, size_t size, size_t count, FILE *stream);
+}
+
+fn weird(FILE, 1) safe_open_readonly(string path) {
+    weird(FILE, 1) file = fopen(path, "rb")
+    if !file {
+        print("Failed to open", path)
+    }
+    return file
+}
+
+fn safe_read_exact(weird(FILE, 1) file, weird(void, 1) ptr, size_t size, size_t count, string fail_message) {
+    if fread(ptr, size, count, file) != count {
+        print(fail_message)
+        return 1
+    }
+    return 0
+}
+
+fn safe_close(weird(FILE, 1) file) {
+    if !file return
+    fclose(file)
 }
 
 fn void release_graph(weird(struct Graph, 1) graph) {
@@ -28,43 +53,38 @@ fn void release_graph(weird(struct Graph, 1) graph) {
 }
 
 fn load_graph(string path, weird(struct Graph, 1) graph) {
-    weird(FILE, 1) file = fopen(path, "rb")
-    if !file {
-        print("Failed to open", path)
-        return 1
-    }
+    weird(FILE, 1) file = safe_open_readonly(path)
+    if !file return 1
 
     uint32_t nodes = 0
     uint64_t edges = 0
-    if fread(&nodes, 4, 1, file) != 1 || fread(&edges, 8, 1, file) != 1 {
-        print("Failed to read graph header")
-        fclose(file)
+    if safe_read_exact(file, &nodes, 4, 1, "Failed to read graph header") != 0 {
+        safe_close(file)
         return 1
     }
-
-    weird(uint64_t, 1) offsets = NULL
-    weird(uint32_t, 1) graph_edges = NULL
+    if safe_read_exact(file, &edges, 8, 1, "Failed to read graph header") != 0 {
+        safe_close(file)
+        return 1
+    }
 
     graph->offsets = alloc((nodes + 1) * sizeof(uint64_t))
     graph->edges = edges > 0 ? alloc(edges * sizeof(uint32_t)) : NULL
 
     if !graph->offsets || (edges > 0 && !graph->edges) {
         print("Out of memory while loading graph")
-        fclose(file)
+        safe_close(file)
         return 1
     }
-    if fread(graph->offsets, 8, nodes + 1, file) != nodes + 1 {
-        print("Failed to read offset table")
-        fclose(file)
+    if safe_read_exact(file, graph->offsets, 8, nodes + 1, "Failed to read offset table") != 0 {
+        safe_close(file)
         return 1
     }
 
-    if edges > 0 && fread(graph->edges, 4, edges, file) != edges {
-        print("Failed to read edge list")
-        fclose(file)
+    if edges > 0 && safe_read_exact(file, graph->edges, 4, edges, "Failed to read edge list") != 0 {
+        safe_close(file)
         return 1
     }
-    fclose(file)
+    safe_close(file)
 
     if graph->offsets[nodes] != edges {
         print("Graph file corrupted")

@@ -121,6 +121,7 @@ C++ binding support is a future milestone.  The directive is preserved as a comm
 | `@import std/time` | `<time.h>` |
 | `@import std/assert` | `<assert.h>` |
 | `@import std/errno` | `<errno.h>` |
+| `@import std/file` | `<stdio.h>` |
 
 ### Semantic Analysis Pass (`src/sema.c`)
 Runs over the token stream before code generation:
