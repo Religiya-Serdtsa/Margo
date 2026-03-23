@@ -201,7 +201,6 @@ bool sema_parse_type(const char *source,
         size_t type_start = j;
         margo_type_t base = {0};
         if (!sema_parse_type(source, tokens, &type_start, &base)) {
-            sema_type_free(&base);
             /* Allow opaque external identifiers inside weird(T, N), e.g. FILE. */
             const token_t *base_tok = &tokens->items[j];
             if (base_tok->kind != TOKEN_IDENTIFIER) {
@@ -212,7 +211,6 @@ bool sema_parse_type(const char *source,
                                        base_tok->offset,
                                        base_tok->offset + base_tok->length);
             if (!base.name) {
-                sema_type_free(&base);
                 return false;
             }
             type_start = j + 1;
