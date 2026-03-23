@@ -47,14 +47,14 @@ fn load_graph(string path, weird(struct Graph, 1) graph) {
 
     graph->offsets = alloc((nodes + 1) * sizeof(uint64_t))
     graph->edges = edges > 0 ? alloc(edges * sizeof(uint32_t)) : NULL
-    offsets = graph->offsets
-    edge_list = graph->edges
 
     if !graph->offsets || (edges > 0 && !graph->edges) {
         print("Out of memory while loading graph")
         fclose(file)
         return 1
     }
+    offsets = graph->offsets
+    edge_list = graph->edges
 
     if fread(graph->offsets, 8, nodes + 1, file) != nodes + 1 {
         print("Failed to read offset table")
