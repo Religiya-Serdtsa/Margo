@@ -43,8 +43,10 @@ Use `--clang <path>` or `CLANG=<path>` to pick a specific LLVM toolchain, and ap
 
 ### Self-compilation experiment
 
-An experimental Margo-in-Margo compiler wrapper lives at `experiment/margo_compiler.margo`.
-The default `make` target already runs this flow; you can also run it explicitly with:
+`experiment/margo_compiler.margo` now embeds the full compiler core via `@style c`,
+so the binary produced from this file can rebuild itself without delegating to the
+bootstrap executable. The default `make` target already runs this flow; you can also
+run it explicitly with:
 
 ```bash
 make margo-in-margo
@@ -52,7 +54,7 @@ make margo-in-margo
 
 This produces:
 - `margo_build/margo_stage1` — built by `build/margo-c`
-- `margo_build/margo` — rebuilt by `margo_stage1`
+- `margo_build/margo` — rebuilt by `margo_stage1` (and then rebuilt once more for stability)
 - `build/margo` — promoted self-compiled compiler
 - `build/margo-c` — C bootstrap compiler
 

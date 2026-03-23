@@ -81,7 +81,7 @@ static bool read_file(const char *path, char **buffer, size_t *size, diagnostic_
 /**
  * @brief Copy a contiguous slice of the source file into the output buffer.
  */
-static bool copy_range(FILE *out, const char *src, size_t start, size_t end) {
+static bool transpiler_copy_range(FILE *out, const char *src, size_t start, size_t end) {
     if (end <= start) {
         return true;
     }
@@ -170,7 +170,7 @@ static bool style_handle_open_brace(style_block_stack_t *stack,
     if (!top->unwrap) {
         return true;
     }
-    if (!copy_range(out, source, *last_emit, tok->offset)) {
+    if (!transpiler_copy_range(out, source, *last_emit, tok->offset)) {
         diagnostic_set(diag, tok->line, "failed to preserve @style prefix before '{'");
         return false;
     }
@@ -193,7 +193,7 @@ static bool style_handle_close_brace(style_block_stack_t *stack,
         return true;
     }
     if (top->unwrap) {
-        if (!copy_range(out, source, *last_emit, tok->offset)) {
+        if (!transpiler_copy_range(out, source, *last_emit, tok->offset)) {
             diagnostic_set(diag, tok->line, "failed to preserve @style prefix before '}'");
             return false;
         }
@@ -506,7 +506,7 @@ static bool handle_fn_keyword(FILE *out,
         *saw_main_fn = true;
     }
     const token_t *fn_tok = &tokens->items[*index];
-    if (!copy_range(out, source, *last_emit, fn_tok->offset)) {
+    if (!transpiler_copy_range(out, source, *last_emit, fn_tok->offset)) {
         diagnostic_set(diag, fn_tok->line, "failed to copy prefix before fn");
         return false;
     }
@@ -1480,7 +1480,7 @@ static bool handle_print_call(FILE *out,
         free(endl_expr);
         return false;
     }
-    if (!copy_range(out, source, *last_emit, tokens->items[i].offset)) {
+    if (!transpiler_copy_range(out, source, *last_emit, tokens->items[i].offset)) {
         diagnostic_set(diag, tokens->items[i].line, "failed to copy prefix before print call");
         print_argument_list_free(&positional);
         free(sep_expr);
@@ -1647,7 +1647,7 @@ static bool handle_scan_call(FILE *out,
         print_argument_list_free(&args);
         return false;
     }
-    if (!copy_range(out, source, *last_emit, tokens->items[i].offset)) {
+    if (!transpiler_copy_range(out, source, *last_emit, tokens->items[i].offset)) {
         diagnostic_set(diag, tokens->items[i].line, "failed to copy prefix before Scan call");
         print_argument_list_free(&args);
         return false;
@@ -1734,7 +1734,7 @@ static bool handle_style_directive(FILE *out,
             block_follows = true;
         }
     }
-    if (!copy_range(out, source, *last_emit, directive_start)) {
+    if (!transpiler_copy_range(out, source, *last_emit, directive_start)) {
         diagnostic_set(diag, 0, "failed to write source prefix");
         return false;
     }
@@ -1744,7 +1744,7 @@ static bool handle_style_directive(FILE *out,
         diagnostic_set(diag, 0, "failed to emit @style comment");
         return false;
     }
-    if (!copy_range(out, source, directive_end, whitespace_end)) {
+    if (!transpiler_copy_range(out, source, directive_end, whitespace_end)) {
         diagnostic_set(diag, 0, "failed to copy spacing after @style");
         return false;
     }
@@ -1785,7 +1785,7 @@ static bool handle_set_directive(FILE *out,
     if (cursor < tokens->count && tokens->items[cursor].kind == TOKEN_NEWLINE) {
         newline_end = tokens->items[cursor].offset + tokens->items[cursor].length;
     }
-    if (!copy_range(out, source, *last_emit, directive_start)) {
+    if (!transpiler_copy_range(out, source, *last_emit, directive_start)) {
         diagnostic_set(diag, 0, "failed to copy prefix before @set");
         return false;
     }
@@ -1796,7 +1796,7 @@ static bool handle_set_directive(FILE *out,
         return false;
     }
     if (newline_end > directive_end) {
-        if (!copy_range(out, source, directive_end, newline_end)) {
+        if (!transpiler_copy_range(out, source, directive_end, newline_end)) {
             diagnostic_set(diag, 0, "failed to append newline after @set");
             return false;
         }
@@ -1823,7 +1823,7 @@ static bool handle_decorator(FILE *out,
     const token_t *ident = &tokens->items[i + 1];
     size_t start = tokens->items[i].offset;
     size_t end = ident->offset + ident->length;
-    if (!copy_range(out, source, *last_emit, start)) {
+    if (!transpiler_copy_range(out, source, *last_emit, start)) {
         diagnostic_set(diag, 0, "failed to copy prefix before decorator");
         return false;
     }
@@ -1925,7 +1925,7 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
 
         /* `null` → `NULL` */
         if (token_is_identifier(tok, "null")) {
-            if (!copy_range(out, source, last_emit, tok->offset)) {
+            if (!transpiler_copy_range(out, source, last_emit, tok->offset)) {
                 diagnostic_set(diag, tok->line, "failed to copy prefix before null");
                 ok = false;
                 break;
@@ -1957,7 +1957,7 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
                     bool is_std_io =
                         (dir.kind == IMPORT_KIND_STD && dir.target && strcmp(dir.target, "io") == 0) ||
                         dir.kind == IMPORT_KIND_GODMODE;
-                    if (!copy_range(out, source, last_emit, dir.start_offset)) {
+                    if (!transpiler_copy_range(out, source, last_emit, dir.start_offset)) {
                         diagnostic_set(diag, 0, "failed to copy source before @import");
                         parser_free_import(&dir);
                         ok = false;
@@ -2022,7 +2022,7 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
                 ok = false;
                 break;
             }
-            if (!copy_range(out, source, last_emit, header.start_offset)) {
+            if (!transpiler_copy_range(out, source, last_emit, header.start_offset)) {
                 diagnostic_set(diag, 0, "failed to copy prefix before for loop");
                 parser_free_for_header(&header);
                 ok = false;
@@ -2050,7 +2050,7 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
                     ok = false;
                     break;
                 }
-                if (!copy_range(out, source, last_emit, header.start_offset)) {
+                if (!transpiler_copy_range(out, source, last_emit, header.start_offset)) {
                     diagnostic_set(diag, 0, "failed to copy prefix before while");
                     parser_free_while_header(&header);
                     ok = false;
@@ -2062,7 +2062,7 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
                     ok = false;
                     break;
                 }
-                if (!copy_range(out, source, header.condition_end_offset, header.body_offset)) {
+                if (!transpiler_copy_range(out, source, header.condition_end_offset, header.body_offset)) {
                     diagnostic_set(diag, 0, "failed to copy spacing after while condition");
                     parser_free_while_header(&header);
                     ok = false;
@@ -2085,7 +2085,7 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
                     ok = false;
                     break;
                 }
-                if (!copy_range(out, source, last_emit, header.start_offset)) {
+                if (!transpiler_copy_range(out, source, last_emit, header.start_offset)) {
                     diagnostic_set(diag, 0, "failed to copy prefix before if");
                     parser_free_if_header(&header);
                     ok = false;
@@ -2097,7 +2097,7 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
                     ok = false;
                     break;
                 }
-                if (!copy_range(out, source, header.condition_end_offset, header.body_offset)) {
+                if (!transpiler_copy_range(out, source, header.condition_end_offset, header.body_offset)) {
                     diagnostic_set(diag, 0, "failed to copy spacing after if condition");
                     parser_free_if_header(&header);
                     ok = false;
@@ -2113,7 +2113,7 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
         /* `return` – inject frees for all owned vars before the keyword */
         if (token_is_identifier(tok, "return") && fn_body_depth > 0) {
             char *ret_ident = extract_return_ident(&tokens, i);
-            if (!copy_range(out, source, last_emit, tok->offset)) {
+            if (!transpiler_copy_range(out, source, last_emit, tok->offset)) {
                 diagnostic_set(diag, tok->line, "failed to copy prefix before return");
                 free(ret_ident);
                 ok = false;
@@ -2152,7 +2152,7 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
                 break;
             }
             /* RAII: inject frees before closing this scope */
-            if (!copy_range(out, source, last_emit, tok->offset)) {
+            if (!transpiler_copy_range(out, source, last_emit, tok->offset)) {
                 diagnostic_set(diag, tok->line, "failed to copy prefix before '}'");
                 ok = false;
                 break;
@@ -2180,7 +2180,7 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
         ok = false;
     }
     if (ok) {
-        if (!copy_range(out, source, last_emit, source_len)) {
+        if (!transpiler_copy_range(out, source, last_emit, source_len)) {
             diagnostic_set(diag, 0, "failed to write tail of source");
             ok = false;
         }

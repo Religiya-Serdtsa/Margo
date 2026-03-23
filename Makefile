@@ -10,6 +10,7 @@ LIBTTAK_EMBED_HDR := src/libttak_bundle.h
 
 MARGO_SRCS = \
 	src/main.c \
+	src/cli.c \
 	src/diagnostics.c \
 	src/lexer.c \
 	src/parser.c \

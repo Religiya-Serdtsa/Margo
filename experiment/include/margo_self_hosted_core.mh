@@ -1,0 +1,8 @@
+#include "../../src/libttak_bundle.c"
+#include "../../src/diagnostics.c"
+#include "../../src/lexer.c"
+#include "../../src/parser.c"
+#include "../../src/sema.c"
+#include "../../src/transpiler.c"
+#include "../../src/builder.c"
+#include "../../src/cli.c"

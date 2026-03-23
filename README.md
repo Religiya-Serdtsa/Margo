@@ -95,7 +95,8 @@ make  # build/margo-c(bootstrap) + self-compiled build/margo 생성
 
 ### 셀프 컴파일 실험
 
-`experiment/margo_compiler.margo`에 Margo-in-Margo 실험용 컴파일러 래퍼가 있다.
+`experiment/margo_compiler.margo`는 이제 `@style c`로 전체 컴파일러 코어를 포함하므로,
+이 파일에서 생성된 바이너리는 bootstrap 실행 파일에 위임하지 않고도 스스로를 다시 빌드할 수 있다.
 `make` 기본 타깃은 셀프 컴파일을 포함하며, 아래 명령은 같은 과정을 명시적으로 실행한다.
 
 ```bash
@@ -104,7 +105,7 @@ make margo-in-margo
 
 생성 결과:
 - `margo_build/margo_stage1` — `build/margo-c`로 빌드한 1단계
-- `margo_build/margo` — `margo_stage1`이 다시 빌드한 2단계
+- `margo_build/margo` — `margo_stage1`이 다시 빌드하고 한 번 더 재검증한 최종 단계
 - `build/margo` — 기본 `make`가 배치하는 self-compiled 최종 바이너리
 - `build/margo-c` — C로 빌드한 bootstrap 컴파일러
 
