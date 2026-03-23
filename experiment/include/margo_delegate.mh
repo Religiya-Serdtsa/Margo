@@ -3,9 +3,34 @@ static int margo_delegate_build(int argc, char **argv) {
         fprintf(stderr, "margo-in-margo: invalid argv for delegation\n");
         return 1;
     }
-    argv[0] = "./build/margo";
-    execv("./build/margo", argv);
-    fprintf(stderr, "margo-in-margo: failed to exec ./build/margo: %s\n", strerror(errno));
+    const char *target = getenv("MARGO_BOOTSTRAP");
+    enum { MARGO_PATH_BUF_LEN = 4096 };
+    static const char *MARGO_BOOTSTRAP_SUFFIX = "/../build/margo-c";
+    char target_buf[MARGO_PATH_BUF_LEN];
+    if (!target || target[0] == '\0') {
+        ssize_t n = readlink("/proc/self/exe", target_buf, sizeof(target_buf) - 1);
+        if (n <= 0 || (size_t)n == sizeof(target_buf) - 1) {
+            target = NULL;
+        } else {
+            target_buf[n] = '\0';
+            char *last_slash = strrchr(target_buf, '/');
+            if (last_slash != NULL) {
+                *last_slash = '\0';
+                size_t base_len = strlen(target_buf);
+                size_t suffix_len = strlen(MARGO_BOOTSTRAP_SUFFIX);
+                if (base_len + suffix_len + 1 < sizeof(target_buf)) {
+                    memcpy(target_buf + base_len, MARGO_BOOTSTRAP_SUFFIX, suffix_len + 1);
+                    target = target_buf;
+                }
+            }
+        }
+    }
+    if (!target || target[0] == '\0') {
+        target = "./build/margo-c";
+    }
+    argv[0] = (char *)target;
+    execv(target, argv);
+    fprintf(stderr, "margo-in-margo: failed to exec %s: %s\n", target, strerror(errno));
     return 1;
 }
 

@@ -12,6 +12,9 @@ a.out
 /bfs_margo
 /bfs_c
 /graph_gen
+/margo_build/
+src/libttak_bundle.c
+src/libttak_bundle.h
 
 # Examples & Benchmarks Outputs
 examples/bfs-bench/*.bin

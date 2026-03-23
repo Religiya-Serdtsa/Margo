@@ -22,9 +22,13 @@ MARGO_OBJS = $(MARGO_SRCS:.c=.o)
 
 all: build/margo
 
-build/margo: $(MARGO_OBJS)
+build/margo-c: $(MARGO_OBJS)
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) -o $@ $(MARGO_OBJS) $(LDFLAGS)
+
+build/margo: margo-in-margo
+	@mkdir -p $(@D)
+	cp margo_build/margo $@
 
 $(LIBTTAK_LIB):
 	$(MAKE) -C $(LIBTTAK_DIR) EMBEDDED=1
@@ -57,9 +61,9 @@ clean:
 	$(MAKE) -C $(LIBTTAK_DIR) clean
 	rm -f $(LIBTTAK_EMBED_SRC) $(LIBTTAK_EMBED_HDR)
 
-margo-in-margo: build/margo
+margo-in-margo: build/margo-c
 	@mkdir -p margo_build
-	./build/margo build experiment/margo_compiler.margo -o margo_build/margo_stage1
+	./build/margo-c build experiment/margo_compiler.margo -o margo_build/margo_stage1
 	./margo_build/margo_stage1 build experiment/margo_compiler.margo -o margo_build/margo
 	@echo "self-compilation complete: margo_build/margo"
 
