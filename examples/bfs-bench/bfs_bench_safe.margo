@@ -43,7 +43,7 @@ fn load_graph(string path, weird(struct Graph, 1) graph) {
     }
 
     weird(uint64_t, 1) offsets = NULL
-    weird(uint32_t, 1) edge_list = NULL
+    weird(uint32_t, 1) graph_edges = NULL
 
     graph->offsets = alloc((nodes + 1) * sizeof(uint64_t))
     graph->edges = edges > 0 ? alloc(edges * sizeof(uint32_t)) : NULL
@@ -53,9 +53,6 @@ fn load_graph(string path, weird(struct Graph, 1) graph) {
         fclose(file)
         return 1
     }
-    offsets = graph->offsets
-    edge_list = graph->edges
-
     if fread(graph->offsets, 8, nodes + 1, file) != nodes + 1 {
         print("Failed to read offset table")
         fclose(file)
