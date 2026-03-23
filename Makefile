@@ -65,6 +65,8 @@ margo-in-margo: build/margo-c
 	@mkdir -p margo_build
 	./build/margo-c build experiment/margo_compiler.margo -o margo_build/margo_stage1
 	./margo_build/margo_stage1 build experiment/margo_compiler.margo -o margo_build/margo
+	cp ./margo_build/margo ./margo_build/margo_stage2
+	./margo_build/margo_stage2 build experiment/margo_compiler.margo -o margo_build/margo
 	@echo "self-compilation complete: margo_build/margo"
 
 .PHONY: all clean margo-in-margo

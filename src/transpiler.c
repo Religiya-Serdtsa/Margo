@@ -267,7 +267,7 @@ static bool raii_live_emit_scope_frees(raii_live_t *live, int depth, FILE *out) 
         if (v->scope_depth != depth) {
             continue;
         }
-        if (fprintf(out, "free(%s);\n", v->name) < 0) {
+        if (fprintf(out, "ttak_mem_free(%s);\n", v->name) < 0) {
             ok = false;
         }
         free(v->name);
@@ -302,7 +302,7 @@ static bool raii_live_emit_return_frees(raii_live_t *live,
         if (skip_name && strcmp(v->name, skip_name) == 0) {
             continue;
         }
-        if (fprintf(out, "free(%s);\n", v->name) < 0) {
+        if (fprintf(out, "ttak_mem_free(%s);\n", v->name) < 0) {
             ok = false;
         }
     }
@@ -338,6 +338,19 @@ static void try_register_alloc_ownership(const token_buffer_t *tokens,
     const token_t *tok = &tokens->items[index];
     if (tok->kind != TOKEN_IDENTIFIER) {
         return;
+    }
+
+    if (index > 0) {
+        size_t p = index - 1;
+        while (p > 0 && tokens->items[p].kind == TOKEN_NEWLINE) {
+            p--;
+        }
+        if (tokens->items[p].kind == TOKEN_SYMBOL && tokens->items[p].length > 0) {
+            char c = tokens->items[p].lexeme[tokens->items[p].length - 1];
+            if (c == '.' || c == '>') {
+                return; /* Do not register struct fields */
+            }
+        }
     }
     /* Build a local name buffer */
     char name[128] = {0};

@@ -3,8 +3,6 @@
 @import std/string
 
 @style c {
-    typedef struct FILE FILE;
-
     struct Graph {
         uint32_t num_nodes;
         uint64_t num_edges;
@@ -39,7 +37,7 @@ fn safe_read_exact(weird(FILE, 1) file, weird(void, 1) ptr, size_t size, size_t 
     return 0
 }
 
-fn safe_close(weird(FILE, 1) file) {
+fn void safe_close(weird(FILE, 1) file) {
     if !file return
     fclose(file)
 }
