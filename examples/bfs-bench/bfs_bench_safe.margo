@@ -42,6 +42,9 @@ fn load_graph(string path, weird(struct Graph, 1) graph) {
         return 1
     }
 
+    weird(uint64_t, 1) offsets = NULL
+    weird(uint32_t, 1) edge_list = NULL
+
     graph->offsets = alloc((nodes + 1) * sizeof(uint64_t))
     graph->edges = edges > 0 ? alloc(edges * sizeof(uint32_t)) : NULL
 
