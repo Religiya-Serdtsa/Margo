@@ -1,6 +1,10 @@
-MARGO ?= ../../build/margo
+MARGO ?= $(firstword $(wildcard ../../build/margo ../../margo_build/margo ../../build/margo-c))
 CC ?= cc
 CFLAGS ?= -O3 -march=native -std=c11 -Wall -Wextra
+
+ifeq ($(strip $(MARGO)),)
+$(error No Margo compiler found. Build the compiler first with `make` at repository root)
+endif
 
 all: bfs_c bfs_margo bfs_bench_safe graph_gen
 

@@ -1105,6 +1105,13 @@ static bool emit_include_for_import(FILE *out, const import_directive_t *dir, di
         }
         return true;
     }
+    if (dir->kind == IMPORT_KIND_STD_FILE) {
+        if (fputs("#include <stdio.h>\n", out) == EOF) {
+            diagnostic_set(diag, 0, "failed to emit std/file include");
+            return false;
+        }
+        return true;
+    }
     if (dir->kind == IMPORT_KIND_STD) {
         const char *mapped = NULL;
         if (strcmp(dir->target, "io") == 0) {
@@ -2195,4 +2202,3 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
     *size_out = generated_size;
     return true;
 }
-

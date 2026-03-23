@@ -5,7 +5,7 @@ Large directed graphs stress both Margo and an optimized C implementation with i
 ## Contents
 
 - `bfs_margo.margo` – original Margo BFS benchmark implementation.
-- `bfs_bench_safe.margo` – allocator-safe Margo BFS benchmark variant that uses `alloc(...)` for graph and queue buffers (no direct `malloc/free`).
+- `bfs_bench_safe.margo` – allocator-safe Margo BFS benchmark variant that uses `alloc(...)` for graph and queue buffers plus local safe file helpers built on `@import std/io`, `@import std/file`, and `@import std/string` (no direct C imports).
 - `bfs_c.c` – reference C implementation compiled with `-O3`.
 - `graph_gen.c` – deterministic graph generator that produces a shared binary adjacency file.
 - `bench.py` – automation script that runs `/usr/bin/time -v` for both binaries and compares metrics.

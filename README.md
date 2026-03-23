@@ -67,6 +67,7 @@ C++ 바인딩 지원은 향후 마일스톤이다. 지시자는 주석으로 보
 | `@import std/time` | `<time.h>` |
 | `@import std/assert` | `<assert.h>` |
 | `@import std/errno` | `<errno.h>` |
+| `@import std/file` | `<stdio.h>` |
 
 ### 의미 분석 패스 (`src/sema.c`)
 컴파일 전에 토큰 스트림을 분석한다:

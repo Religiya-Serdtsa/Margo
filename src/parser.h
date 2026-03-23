@@ -25,6 +25,7 @@
  *  - IMPORT_KIND_STD_TIME    maps `@import std/time`    -> <time.h>
  *  - IMPORT_KIND_STD_ASSERT  maps `@import std/assert`  -> <assert.h>
  *  - IMPORT_KIND_STD_ERRNO   maps `@import std/errno`   -> <errno.h>
+ *  - IMPORT_KIND_STD_FILE    maps `@import std/file`    -> <stdio.h>
  */
 typedef enum {
     IMPORT_KIND_C,
@@ -37,6 +38,7 @@ typedef enum {
     IMPORT_KIND_STD_TIME,
     IMPORT_KIND_STD_ASSERT,
     IMPORT_KIND_STD_ERRNO,
+    IMPORT_KIND_STD_FILE,
 } import_kind_t;
 
 /**
