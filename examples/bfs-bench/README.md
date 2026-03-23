@@ -4,7 +4,8 @@ Large directed graphs stress both Margo and an optimized C implementation with i
 
 ## Contents
 
-- `bfs_margo.margo` – native Margo BFS implementation that leans on the built-in libttak allocator (no extra `@import c/ttak/...` needed) plus a manual circular queue and 32-bit distances.
+- `bfs_margo.margo` – original Margo BFS benchmark implementation.
+- `bfs_bench_safe.margo` – allocator-safe Margo BFS benchmark variant that uses `alloc(...)` for graph and queue buffers (no direct `malloc/free`).
 - `bfs_c.c` – reference C implementation compiled with `-O3`.
 - `graph_gen.c` – deterministic graph generator that produces a shared binary adjacency file.
 - `bench.py` – automation script that runs `/usr/bin/time -v` for both binaries and compares metrics.
@@ -25,8 +26,9 @@ All values are written in the host endianness (little-endian on Linux). Both BFS
 
 ```bash
 cd examples/bfs-bench
-make                          # builds bfs_margo, bfs_c, graph_gen
-python3 bench.py              # ensures graph.bin, runs both binaries with /usr/bin/time -v
+make                          # builds bfs_margo, bfs_bench_safe, bfs_c, graph_gen
+python3 bench.py              # default: compares bfs_bench_safe vs bfs_c with /usr/bin/time -v
+python3 bench.py --margo-bin bfs_margo   # compare original bfs_margo vs bfs_c
 ```
 
 `bench.py` accepts a few quality-of-life flags:
@@ -34,6 +36,7 @@ python3 bench.py              # ensures graph.bin, runs both binaries with /usr/
 - `--graph PATH` – use or create a different graph file (default `graph.bin`).
 - `--nodes N`, `--edges E`, `--seed S` – parameters passed to `graph_gen` when the graph is missing or `--regenerate` is set.
 - `--regenerate` – force a fresh graph build even if the file already exists.
+- `--margo-bin {bfs_bench_safe,bfs_margo}` – choose which Margo binary to compare against C (default `bfs_bench_safe`).
 - `--skip-build` – reuse existing binaries instead of invoking `make`.
 
 The generator can also be invoked manually:

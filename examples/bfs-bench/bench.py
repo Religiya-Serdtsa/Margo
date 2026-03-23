@@ -43,7 +43,7 @@ def run_subprocess(cmd: list[str], cwd: Path = ROOT, capture: bool = False) -> s
 def ensure_build(skip: bool) -> None:
     if skip:
         return
-    run_subprocess(["make", "bfs_c", "bfs_margo", "graph_gen"])
+    run_subprocess(["make", "bfs_c", "bfs_margo", "bfs_bench_safe", "graph_gen"])
 
 
 def ensure_graph(path: Path, nodes: int, edges: int, seed: int, regenerate: bool) -> None:
@@ -134,6 +134,12 @@ def main() -> int:
     parser.add_argument("--edges", type=int, default=DEFAULT_EDGES, help="Number of edges for generation")
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED, help="Seed used by graph generator")
     parser.add_argument("--regenerate", action="store_true", help="Force graph regeneration before benchmarking")
+    parser.add_argument(
+        "--margo-bin",
+        choices=["bfs_margo", "bfs_bench_safe"],
+        default="bfs_bench_safe",
+        help="Margo benchmark binary to run (default: bfs_bench_safe)",
+    )
     parser.add_argument("--skip-build", action="store_true", help="Skip invoking make before running the benchmarks")
     args = parser.parse_args()
 
@@ -144,11 +150,12 @@ def main() -> int:
 
     print(f"Benchmarking with graph: {graph_path}")
 
-    margo_metrics, margo_stdout = run_timed("./bfs_margo", graph_path)
+    margo_binary = f"./{args.margo_bin}"
+    margo_metrics, margo_stdout = run_timed(margo_binary, graph_path)
     c_metrics, c_stdout = run_timed("./bfs_c", graph_path)
 
     if margo_stdout:
-        print("\n[Margo stdout]")
+        print(f"\n[Margo stdout: {args.margo_bin}]")
         print(margo_stdout)
     if c_stdout:
         print("\n[C stdout]")
