@@ -1,0 +1,315 @@
+@import std/string
+@import std/stdlib
+@import c/ctype
+
+struct token_t {
+    token_kind_t kind
+    weird(char, 1) lexeme
+    size_t length
+    size_t offset
+    size_t line
+}
+
+struct token_buffer_t {
+    weird(token_t, 1) items
+    size_t count
+    size_t capacity
+}
+
+enum token_kind_t {
+    TOKEN_IDENTIFIER,
+    TOKEN_NUMBER,
+    TOKEN_STRING,
+    TOKEN_CHAR,
+    TOKEN_NEWLINE,
+    TOKEN_SYMBOL,
+    TOKEN_AT,
+    TOKEN_EOF,
+}
+
+struct lexer_state_t {
+    weird(char, 1) src
+    size_t length
+    size_t pos
+    size_t line
+}
+
+fn bool append_token(weird(token_buffer_t, 1) buffer, token_t token) {
+    if buffer->count == buffer->capacity {
+        auto new_capacity = buffer->capacity ? buffer->capacity * 2 : 64
+        auto new_bytes = realloc(buffer->items, new_capacity * sizeof(token_t))
+        if new_bytes == null {
+            return false
+        }
+        buffer->items = new_bytes
+        buffer->capacity = new_capacity
+    }
+    buffer->items[buffer->count] = token
+    buffer->count += 1
+    return true
+}
+
+fn void skip_line_comment(weird(lexer_state_t, 1) lex) {
+    while lex->pos < lex->length {
+        auto c = lex->src[lex->pos]
+        if c == '\n' {
+            break
+        }
+        lex->pos += 1
+    }
+}
+
+fn bool skip_block_comment(weird(lexer_state_t, 1) lex, weird(diagnostic_t, 1) diag) {
+    while lex->pos + 1 < lex->length {
+        auto c = lex->src[lex->pos]
+        auto next = lex->src[lex->pos + 1]
+        if c == '*' && next == '/' {
+            lex->pos += 2
+            return true
+        }
+        if c == '\n' {
+            lex->line += 1
+        }
+        lex->pos += 1
+    }
+    diagnostic_set(diag, lex->line, "unterminated block comment")
+    return false
+}
+
+fn bool emit_newline(weird(lexer_state_t, 1) lex, weird(token_buffer_t, 1) out) {
+    auto start = lex->pos
+    auto length = 1
+    if lex->src[lex->pos] == '\r' && lex->pos + 1 < lex->length && lex->src[lex->pos + 1] == '\n' {
+        length = 2
+    }
+    lex->pos += length
+    token_t tok = {
+        .kind = TOKEN_NEWLINE,
+        .lexeme = lex->src + start,
+        .length = length,
+        .offset = start,
+        .line = lex->line,
+    }
+    lex->line += 1
+    return append_token(out, tok)
+}
+
+fn bool emit_identifier(weird(lexer_state_t, 1) lex, weird(token_buffer_t, 1) out) {
+    auto start = lex->pos
+    lex->pos += 1
+    while lex->pos < lex->length {
+        auto c = lex->src[lex->pos]
+        if !(isalnum((int)c) || c == '_') {
+            break
+        }
+        lex->pos += 1
+    }
+    token_t tok = {
+        .kind = TOKEN_IDENTIFIER,
+        .lexeme = lex->src + start,
+        .length = lex->pos - start,
+        .offset = start,
+        .line = lex->line,
+    }
+    return append_token(out, tok)
+}
+
+fn bool emit_number(weird(lexer_state_t, 1) lex, weird(token_buffer_t, 1) out) {
+    auto start = lex->pos
+    lex->pos += 1
+    while lex->pos < lex->length {
+        auto c = lex->src[lex->pos]
+        if !(isalnum((int)c) || c == '_' || c == '.') {
+            break
+        }
+        lex->pos += 1
+    }
+    token_t tok = {
+        .kind = TOKEN_NUMBER,
+        .lexeme = lex->src + start,
+        .length = lex->pos - start,
+        .offset = start,
+        .line = lex->line,
+    }
+    return append_token(out, tok)
+}
+
+fn bool emit_string_like(weird(lexer_state_t, 1) lex,
+                         weird(token_buffer_t, 1) out,
+                         weird(diagnostic_t, 1) diag,
+                         char delimiter,
+                         token_kind_t kind) {
+    auto start = lex->pos
+    lex->pos += 1
+    while lex->pos < lex->length {
+        auto c = lex->src[lex->pos]
+        if c == delimiter {
+            lex->pos += 1
+            token_t tok = {
+                .kind = kind,
+                .lexeme = lex->src + start,
+                .length = lex->pos - start,
+                .offset = start,
+                .line = lex->line,
+            }
+            return append_token(out, tok)
+        }
+        if c == '\\' && lex->pos + 1 < lex->length {
+            lex->pos += 2
+            continue
+        }
+        if c == '\n' {
+            lex->line += 1
+        }
+        lex->pos += 1
+    }
+    diagnostic_set(diag, lex->line, "unterminated literal")
+    return false
+}
+
+fn bool emit_symbol(weird(lexer_state_t, 1) lex,
+                    weird(token_buffer_t, 1) out,
+                    token_kind_t kind,
+                    size_t width) {
+    auto start = lex->pos
+    lex->pos += width
+    token_t tok = {
+        .kind = kind,
+        .lexeme = lex->src + start,
+        .length = width,
+        .offset = start,
+        .line = lex->line,
+    }
+    return append_token(out, tok)
+}
+
+fn bool lexer_tokenize(weird(char, 1) source,
+                       size_t length,
+                       weird(token_buffer_t, 1) out,
+                       weird(diagnostic_t, 1) diag) {
+    memset(out, 0, sizeof(token_buffer_t))
+    lexer_state_t lex = {
+        .src = source,
+        .length = length,
+        .pos = 0,
+        .line = 1,
+    }
+    while lex.pos < lex.length {
+        auto c = lex.src[lex.pos]
+        if c == ' ' || c == '\t' || c == '\f' || c == '\v' {
+            lex.pos += 1
+            continue
+        }
+        if c == '\n' || c == '\r' {
+            if !emit_newline(&lex, out) {
+                diagnostic_set(diag, lex.line, "out of memory while recording newline tokens")
+                lexer_free(out)
+                return false
+            }
+            continue
+        }
+        if c == '/' && lex.pos + 1 < lex.length {
+            auto next = lex.src[lex.pos + 1]
+            if next == '/' {
+                lex.pos += 2
+                skip_line_comment(&lex)
+                continue
+            }
+            if next == '*' {
+                lex.pos += 2
+                if !skip_block_comment(&lex, diag) {
+                    lexer_free(out)
+                    return false
+                }
+                continue
+            }
+        }
+        if c == '@' {
+            if !emit_symbol(&lex, out, TOKEN_AT, 1) {
+                diagnostic_set(diag, lex.line, "out of memory while tokenizing")
+                lexer_free(out)
+                return false
+            }
+            continue
+        }
+        if isalpha((int)c) || c == '_' {
+            if !emit_identifier(&lex, out) {
+                diagnostic_set(diag, lex.line, "out of memory while tokenizing identifiers")
+                lexer_free(out)
+                return false
+            }
+            continue
+        }
+        if isdigit((int)c) {
+            if !emit_number(&lex, out) {
+                diagnostic_set(diag, lex.line, "out of memory while tokenizing numbers")
+                lexer_free(out)
+                return false
+            }
+            continue
+        }
+        if c == '"' {
+            if !emit_string_like(&lex, out, diag, '"', TOKEN_STRING) {
+                lexer_free(out)
+                return false
+            }
+            continue
+        }
+        if c == '\'' {
+            if !emit_string_like(&lex, out, diag, '\'', TOKEN_CHAR) {
+                lexer_free(out)
+                return false
+            }
+            continue
+        }
+        if !emit_symbol(&lex, out, TOKEN_SYMBOL, 1) {
+            diagnostic_set(diag, lex.line, "out of memory while tokenizing symbols")
+            lexer_free(out)
+            return false
+        }
+    }
+    token_t eof = {
+        .kind = TOKEN_EOF,
+        .lexeme = source + length,
+        .length = 0,
+        .offset = length,
+        .line = lex.line,
+    }
+    if !append_token(out, eof) {
+        diagnostic_set(diag, lex.line, "out of memory while finalizing tokens")
+        lexer_free(out)
+        return false
+    }
+    return true
+}
+
+fn void lexer_free(weird(token_buffer_t, 1) buffer) {
+    if buffer == null {
+        return
+    }
+    free(buffer->items)
+    buffer->items = null
+    buffer->count = 0
+    buffer->capacity = 0
+}
+
+fn bool token_is_identifier(weird(token_t, 1) tok, weird(char, 1) literal) {
+    if tok == null || tok->kind != TOKEN_IDENTIFIER {
+        return false
+    }
+    auto len = strlen(literal)
+    if tok->length != len {
+        return false
+    }
+    return strncmp(tok->lexeme, literal, len) == 0
+}
+
+fn bool token_is_symbol(weird(token_t, 1) tok, char symbol) {
+    if tok == null || tok->kind != TOKEN_SYMBOL {
+        return false
+    }
+    if tok->length != 1 {
+        return false
+    }
+    return tok->lexeme[0] == symbol
+}
