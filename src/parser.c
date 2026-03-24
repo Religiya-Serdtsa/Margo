@@ -364,6 +364,9 @@ bool parser_parse_import(const char *source,
                (strcmp(sanitized, "process") == 0)) {
         kind = IMPORT_KIND_PROCESS_CORE;
         payload = "process/core";
+    } else if (strncmp(sanitized, "matrix/core", 11) == 0 && sanitized[11] == '\0') {
+        kind = IMPORT_KIND_MATRIX_CORE;
+        payload = "matrix/core";
     } else {
         diagnostic_set(diag, at->line, "unsupported import prefix in '%s'", sanitized);
         free(sanitized);

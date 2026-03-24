@@ -99,6 +99,22 @@ mat_for(field3d, fn(i, j, k, cell) bool {
 })
 ```
 
+#### 4.5 행렬 코어 유틸리티 (`@import matrix/core`)
+* `matrix_fill(rows, cols, value)`
+  * 지정된 차수의 새 `auto_matrix`를 RAII 규칙에 맞춰 할당하고 모든 셀을 `value`로 초기화한다.
+  * 결과는 일반 배열과 동일하게 `grid[i][j]` 접근이 가능하며 `mat_for`, `mat_find`, `mat_neighbor`와 즉시 호환된다.
+* `matrix_identity(size, diag_value = 1)`
+  * `size × size` 단위 행렬을 생성한다. `diag_value`는 주대각선 초기화 값이며, 나머지 셀은 0으로 채워진다.
+  * 그래프 가중치 정규화, 회전/스케일링 행렬 부트스트랩 등에 활용할 수 있다.
+* `matrix_mul(lhs, rhs)`
+  * `lhs`(m×k)와 `rhs`(k×n)의 곱을 계산해 새 행렬을 반환한다.
+  * 차수가 맞지 않으면 의미 분석 단계에서 진단을 발생시키며, 연산 중에는 캐시 친화적인 평탄화 전략을 따른다.
+* `matrix_transpose(matrix)`
+  * 데이터를 복사하지 않고 축을 뒤집은 뷰를 돌려준다. 트랜스포즈된 결과 역시 `auto_matrix`로 간주한다.
+* `matrix_map(matrix, fn mapper)`
+  * 동일 차수의 새 행렬을 생성하며 각 요소마다 `mapper(mat_neighbor_cell cell)`을 호출해 반환값을 채운다.
+  * `mapper`는 `cell.value`, `cell.index[*]`, `cell.distance`를 참고할 수 있어 이웃 민감한 변환을 쉽게 조합할 수 있다.
+
 #### 4.5 리스트 기반 `for-in` 구문
 * `for value in [1, 2, heavy_calc(), 4] { ... }`처럼 Python과 유사한 열거식을 지원한다.
 * 대괄호 안 표현식은 좌→우 순서대로 평가되어 숨김 상수 배열에 보관되며, 반복문은 해당 배열 길이만큼 순회한다.

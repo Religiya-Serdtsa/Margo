@@ -2,7 +2,7 @@
 @import std/file
 @import std/string
 @import c/stdint
-@import file/core
+@import matrix/core
 
 struct Graph {
     uint32_t num_nodes
@@ -48,14 +48,21 @@ fn void release_graph(weird(struct Graph, 1) graph) {
 
 fn size_t guard_graph_stream(weird(FILE, 1) file) {
     if !file return 0
-    bool zip_hits[] = return_all_bitmask_offsets(file, [0x50, 0x4B, 0x03, 0x04])
-    if zip_hits.len > 0 && zip_hits[0] {
-        print("Graph file appears compressed (PK header detected)")
+    auto current = ftell(file)
+    if current < 0 {
         return 0
     }
-    size_t file_bytes = zip_hits.len
-    fseek(file, 0, SEEK_SET)
-    return file_bytes
+    if fseek(file, 0, SEEK_END) != 0 {
+        return 0
+    }
+    auto end_pos = ftell(file)
+    if end_pos < 0 {
+        return 0
+    }
+    if fseek(file, 0, SEEK_SET) != 0 {
+        return 0
+    }
+    return (size_t)end_pos
 }
 
 fn load_graph(string path, weird(struct Graph, 1) graph) {
@@ -123,46 +130,42 @@ fn run_bfs(weird(struct Graph, 1) graph, weird(struct BFSStats, 1) stats) {
     }
 
     auto node_count = graph->num_nodes
-    weird(uint32_t, 1) queue = alloc(node_count * sizeof(uint32_t))
-    weird(int32_t, 1) distances = alloc(node_count * sizeof(int32_t))
+    auto_matrix queue = matrix_fill(1, node_count, 0)
+    auto_matrix distances = matrix_fill(1, node_count, -1)
 
     if !queue || !distances {
         return 1
-    }
-
-    for i = 0; < node_count; ++ {
-        distances[i] = -1
     }
 
     auto head = 0
     auto tail = 0
     auto size = 0
 
-    queue[tail] = 0
+    matrix_set(queue, 0, tail, 0)
     tail = (tail + 1 == node_count) ? 0 : (tail + 1)
     size = 1
-    distances[0] = 0
+    matrix_set(distances, 0, 0, 0)
 
     auto visited = 1
     auto distance_sum = 0
     auto max_distance = 0
 
     while size > 0 {
-        auto node = queue[head]
+        auto node = (uint32_t)matrix_get(queue, 0, head)
         head = (head + 1 == node_count) ? 0 : (head + 1)
         size--
 
-        auto base_distance = distances[node]
+        auto base_distance = (int32_t)matrix_get(distances, 0, node)
         auto begin = graph->offsets[node]
         auto end = graph->offsets[node + 1]
 
         for idx = begin; < end; ++ {
             auto neighbor = graph->edges[idx]
-            if distances[neighbor] != -1 continue
+            if ((int32_t)matrix_get(distances, 0, neighbor) != -1) continue
 
             auto next_distance = base_distance + 1
-            distances[neighbor] = next_distance
-            queue[tail] = neighbor
+            matrix_set(distances, 0, neighbor, next_distance)
+            matrix_set(queue, 0, tail, neighbor)
             tail = (tail + 1 == node_count) ? 0 : (tail + 1)
             size++
             visited++

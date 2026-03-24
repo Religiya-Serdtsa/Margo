@@ -328,10 +328,31 @@ static void raii_live_free(raii_live_t *live) {
  *
  * Advances nothing — this is a pure lookahead that does not move *index*.
  */
+static bool token_is_owned_factory(const token_t *tok) {
+    if (!tok || tok->kind != TOKEN_IDENTIFIER) {
+        return false;
+    }
+    static const char *factories[] = {
+        "alloc",
+        "alloc_and_init",
+        "matrix_fill",
+        "matrix_identity",
+        "matrix_mul",
+        "matrix_transpose",
+        "matrix_map",
+    };
+    for (size_t i = 0; i < sizeof(factories) / sizeof(factories[0]); ++i) {
+        if (token_is_identifier(tok, factories[i])) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void try_register_alloc_ownership(const token_buffer_t *tokens,
-                                          size_t index,
-                                          int brace_depth,
-                                          raii_live_t *live) {
+                                         size_t index,
+                                         int brace_depth,
+                                         raii_live_t *live) {
     if (!tokens || !live) {
         return;
     }
@@ -384,10 +405,7 @@ static void try_register_alloc_ownership(const token_buffer_t *tokens,
     if (rhs->kind != TOKEN_IDENTIFIER) {
         return;
     }
-    bool is_alloc =
-        (strncmp(rhs->lexeme, "alloc_and_init", rhs->length) == 0 && rhs->length == 14) ||
-        (strncmp(rhs->lexeme, "alloc",         rhs->length) == 0 && rhs->length == 5);
-    if (!is_alloc) {
+    if (!token_is_owned_factory(rhs)) {
         return;
     }
     /* Register – ignore push failures silently (only cosmetic: free won't be injected) */
@@ -833,6 +851,7 @@ static bool should_insert_semicolon(char last_char) {
         case ';':
         case '{':
         case '}':
+        case ',':
             return false;
         default:
             return true;
@@ -1223,6 +1242,13 @@ static bool emit_include_for_import(FILE *out, const import_directive_t *dir, di
     if (dir->kind == IMPORT_KIND_PROCESS_CORE) {
         if (fputs("#include <margo_process/core.h>\n", out) == EOF) {
             diagnostic_set(diag, 0, "failed to emit process/core include");
+            return false;
+        }
+        return true;
+    }
+    if (dir->kind == IMPORT_KIND_MATRIX_CORE) {
+        if (fputs("#include <margo_matrix/core.h>\n", out) == EOF) {
+            diagnostic_set(diag, 0, "failed to emit matrix/core include");
             return false;
         }
         return true;

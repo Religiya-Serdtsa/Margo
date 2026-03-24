@@ -74,6 +74,7 @@ C++ 바인딩 지원은 향후 마일스톤이다. 지시자는 주석으로 보
 - `@import threads/core` — `threads_cluster_t`, `threads_mailbox_t`, `_pairs` 조합을 위한 헤더 온리 스케줄러를 노출한다. `pthread` 위에서 동작하며 `threads_spawn`, `threads_spawn_isolate`, `threads_mailbox_*` API를 제공한다.
 - `@import process` / `@import process/core` — `process_channel_t`, `process_cluster_t`를 포함한 멀티프로세스 통신 도구. POSIX `fork` + 공유 메모리 + 채널을 묶어 Go 스타일 `send/recv`를 흉내 낸다.
 - 두 런타임을 묶어 보여주는 최초의 벤치는 `examples/thread_process_bench`에 포함된다.
+- `examples/matrix_astar`는 `matrix/core`의 기초 연산과 `mat_for`/`mat_neighbor` 구문을 활용해 A* 경로 탐색을 행렬 기반 상태 기계로 표현한다.
 
 ### 의미 분석 패스 (`src/sema.c`)
 컴파일 전에 토큰 스트림을 분석한다:
@@ -152,6 +153,15 @@ make
 - `for x in [1, 2, 3, 4] { ... }`처럼 Python 스타일의 리스트 열거 구문을 지원한다. 내부적으로는 숨김 상수 배열을 만든 뒤 기존 `for` 문으로 내린다.
 
 숫자 야구 예제는 위 문법을 사용해 콘셉트 문서와 유사한 스타일을 미리 체험할 수 있다.
+
+#### 행렬 코어 함수 (`matrix/core`)
+
+- `matrix_fill(rows, cols, value)`는 지정한 차수의 새로운 `auto_matrix`를 만들어 모든 셀을 `value`로 채운다. 결과는 일반 2차원 배열처럼 `grid[i][j]`로 수정할 수 있으며, `mat_for`나 `mat_neighbor`와도 호환된다.
+- `matrix_identity(size, diag_value = 1)`는 주어진 크기의 단위 행렬을 곧바로 생성한다. 변환/회전 행렬을 빠르게 조합하거나 그래프 가중치를 정규화할 때 사용한다.
+- `matrix_mul(lhs, rhs)`는 행렬 곱셈을 수행해 새 행렬을 반환한다. `lhs` 열수와 `rhs` 행수가 맞지 않으면 진단을 발생시킨다.
+- `matrix_transpose(matrix)`는 데이터를 복사하지 않고 축을 뒤집은 뷰를 돌려주며, 이후 곱셈/맵핑 함수에 그대로 전달할 수 있다.
+- `matrix_map(matrix, fn mapper)`는 동일 차수의 새 행렬을 만들고 각 셀을 사용자 정의 변환 결과로 치환한다. `mapper`는 `(mat_neighbor_cell cell) -> auto` 서명을 따르며, `cell.value`와 `cell.index`를 모두 참고할 수 있다.
+- `matrix_rows`, `matrix_cols`, `matrix_get`/`matrix_set`, `matrix_neighbor(...)/neighbor_view_for_each(...)` 같은 런타임 도우미도 제공되어 필요할 때 직접 행렬 요소를 순회하거나 인접 셀을 탐색할 수 있다.
 
 ### Showcase 예시
 

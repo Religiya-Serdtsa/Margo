@@ -85,6 +85,15 @@ The frontend now tokenizes/parses `.margo` sources before handing them to Clang,
 
 The number baseball example now uses the new loop sugar so that its structure matches the concept draft more closely.
 
+#### Matrix Core Helpers (`matrix/core`)
+
+- `matrix_fill(rows, cols, value)` allocates a fresh `auto_matrix` with the requested rank (rows × cols for 2D) and initializes every cell to `value`. The result behaves like a native array (`grid[i][j]`) and plugs straight into `mat_for`/`mat_neighbor`.
+- `matrix_identity(size, diag_value = 1)` materializes an identity matrix of arbitrary order so you can normalize weights or bootstrap transforms without writing nested loops.
+- `matrix_mul(lhs, rhs)` performs dense matrix multiplication and returns a new buffer. Dimension mismatches surface as compile-time diagnostics.
+- `matrix_transpose(matrix)` returns a zero-copy view with swapped axes; the handle can be fed back into the rest of the helpers.
+- `matrix_map(matrix, fn mapper)` builds a new matrix with the same shape by executing `mapper(mat_neighbor_cell cell)` per element, giving easy access to the cell value plus all coordinates.
+- Utility helpers such as `matrix_rows`, `matrix_cols`, `matrix_get`/`matrix_set`, and `matrix_neighbor(...)/neighbor_view_for_each(...)` expose convenient iteration primitives so numerical code can mix hand-written loops with the higher-level helpers above.
+
 ### Showcase Snippets
 
 ```margo
@@ -181,6 +190,7 @@ C++ binding support is a future milestone.  The directive is preserved as a comm
 - `@import threads/core` — exposes a header-only worker scheduler built on top of `pthread`. Provides `threads_cluster_t`, `threads_mailbox_t`, and helpers such as `threads_spawn`, `threads_spawn_isolate`, and `threads_mailbox_send/recv`.
 - `@import process` / `@import process/core` — wraps POSIX `fork`, shared memory, and futex-friendly channels via `process_channel_t`/`process_cluster_t`. Mimics Go-style `chan <- val` semantics in plain C.
 - The new `examples/thread_process_bench` folder wires both modules together to provide a combined throughput benchmark.
+- `examples/matrix_astar` demonstrates how `matrix/core` helpers, `mat_for`, and `mat_neighbor` can encode an A* search as a clean matrix-driven state machine.
 
 ### Semantic Analysis Pass (`src/sema.c`)
 Runs over the token stream before code generation:

@@ -29,6 +29,8 @@
  *  - IMPORT_KIND_THREADS_CORE maps `@import threads/core` -> "threads/core.h"
  *  - IMPORT_KIND_PROCESS_CORE maps `@import process` or `@import process/core`
  *                              into "process/core.h"
+ *  - IMPORT_KIND_MATRIX_CORE maps `@import matrix/core` into the matrix runtime
+ *                              utilities header.
  */
 typedef enum {
     IMPORT_KIND_C,
@@ -44,6 +46,7 @@ typedef enum {
     IMPORT_KIND_STD_FILE,
     IMPORT_KIND_THREADS_CORE,
     IMPORT_KIND_PROCESS_CORE,
+    IMPORT_KIND_MATRIX_CORE,
 } import_kind_t;
 
 /**

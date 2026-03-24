@@ -345,6 +345,11 @@ bool sema_parse_type(const char *source,
             *index = i + 1;
             return true;
         }
+        /* Treat any remaining identifier as an opaque user-defined type. */
+        out->kind = MARGO_TYPE_UNKNOWN;
+        out->name = sema_dup_range(source, tok->offset, tok->offset + tok->length);
+        *index = i + 1;
+        return out->name != NULL;
     }
 
     return false;
@@ -812,6 +817,35 @@ static bool collect_fn_signature(sema_state_t *st, size_t fn_idx) {
  * Returns true when a declaration was found (and possibly registered in
  * both the symbol table and the RAII table).
  */
+static bool sema_token_matches(const token_t *tok, const char *text) {
+    if (!tok || tok->kind != TOKEN_IDENTIFIER || !text) {
+        return false;
+    }
+    size_t len = strlen(text);
+    return tok->length == len && strncmp(tok->lexeme, text, len) == 0;
+}
+
+static bool sema_is_owned_factory(const token_t *tok) {
+    static const char *factories[] = {
+        "alloc",
+        "alloc_and_init",
+        "matrix_fill",
+        "matrix_identity",
+        "matrix_mul",
+        "matrix_transpose",
+        "matrix_map",
+    };
+    if (!tok || tok->kind != TOKEN_IDENTIFIER) {
+        return false;
+    }
+    for (size_t i = 0; i < sizeof(factories) / sizeof(factories[0]); ++i) {
+        if (sema_token_matches(tok, factories[i])) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool try_register_var_decl(sema_state_t *st, size_t i) {
     /* Pattern: <type> <ident> [= <expr>]
      * The presence of a type token before an identifier strongly suggests
@@ -853,9 +887,7 @@ static bool try_register_var_decl(sema_state_t *st, size_t i) {
         size_t rhs = skip_nl(st->tokens, k + 1);
         if (rhs < st->tokens->count) {
             const token_t *rhs_tok = &st->tokens->items[rhs];
-            if (rhs_tok->kind == TOKEN_IDENTIFIER &&
-                ((strncmp(rhs_tok->lexeme, "alloc_and_init", rhs_tok->length) == 0 && rhs_tok->length == 14) ||
-                 (strncmp(rhs_tok->lexeme, "alloc",         rhs_tok->length) == 0 && rhs_tok->length == 5))) {
+            if (sema_is_owned_factory(rhs_tok)) {
                 is_alloc_owned = true;
                 vtype.is_owned = true;
             }
@@ -895,13 +927,7 @@ static void check_reassignment_ownership(sema_state_t *st, size_t i) {
         return;
     }
     const token_t *rhs_tok = &st->tokens->items[k];
-    if (rhs_tok->kind != TOKEN_IDENTIFIER) {
-        return;
-    }
-    bool is_alloc_rhs =
-        (strncmp(rhs_tok->lexeme, "alloc_and_init", rhs_tok->length) == 0 && rhs_tok->length == 14) ||
-        (strncmp(rhs_tok->lexeme, "alloc",         rhs_tok->length) == 0 && rhs_tok->length == 5);
-    if (!is_alloc_rhs) {
+    if (!sema_is_owned_factory(rhs_tok)) {
         return;
     }
     /* Variable already in RAII table? */

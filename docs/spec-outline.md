@@ -42,6 +42,13 @@
   - Radius is interpreted as an L∞ band: every axis range `[coord - n, coord + n]` is enumerated, and out-of-bounds coordinates are clamped away automatically.
   - When a `seek_fn` is supplied, it is invoked with a `mat_neighbor_cell` struct (`.index`, `.value`, `.distance`). Only cells returning `true` are retained.
   - The resulting view exposes `.count`, random access (`view[i].value`, `view[i].index[d]`), and a `for_each` helper that short-circuits if the callback yields `false`.
+- Matrix core helpers (`@import matrix/core`):
+- `matrix_fill(rows, cols, value)` allocates a fresh RAII-managed `auto_matrix` and initializes every entry to `value`. The handle behaves like a plain array (`grid[i][j]`) and plugs into `mat_*` constructs.
+- `matrix_identity(size, diag_value = 1)` emits an identity matrix of arbitrary order with the diagonal preset to `diag_value` and the rest zeroed.
+- `matrix_mul(lhs, rhs)` multiplies two dense matrices (`lhs` m×k, `rhs` k×n) and returns a new buffer; mismatched dimensions trigger diagnostics during semantic analysis.
+- `matrix_transpose(matrix)` returns a zero-copy view with swapped axes so the original storage can be reused.
+- `matrix_map(matrix, fn mapper)` synthesizes a same-shaped matrix by running `mapper(mat_neighbor_cell cell)` per element, providing easy access to coordinates plus the original value.
+- Procedural helpers (`matrix_rows`, `matrix_cols`, `matrix_get`/`matrix_set`, `matrix_neighbor` + `neighbor_view_for_each`) expose shape-aware iterators so imperative code can traverse matrices or inspect adjacent cells without leaving Margo.
 - `for value in [ ... ] { ... }` loops:
   - Parser lowers literal enumerations into synthesized constant buffers and emits classic `for` loops over their indices.
   - Loop variables default to `__auto_type`, are read-only, and support heterogenous inputs by promoting to a shared super type.
