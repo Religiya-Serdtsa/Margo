@@ -78,8 +78,52 @@ The frontend now tokenizes/parses `.margo` sources before handing them to Clang,
 - Parenthesis-free loops such as `for idx=0; <N; ++ { ... }`, which get rewritten into canonical `for (idx = 0; idx < N; ++idx)` form by reusing the implicitly declared loop variable.
 - Bare `if` headers like `if v == 1 return 100` automatically gain parentheses around the condition while keeping the original spacing that separates the condition from the following statement or block.
 - Function-level decorators like `fn @use_switch_optim foo(...)` are preserved as comments so they no longer break the generated C.
+- `mat_find(arr, target, precision) { ... }` and `mat_for(arr, fn_name)` provide matrix-aware traversal sugar: the compiler infers the rank/shape, executes the block only when an approximate match is discovered, and feeds all index coordinates to the handler without requiring hand-written nested loops, all while flattening tensors in a linear-algebra-friendly order for cache locality.
+- `mat_neighbor()` extends the same idea—inside `mat_for` it captures the ambient indices to return a radius-1 neighbor view, while top-level calls such as `mat_neighbor(arr, i, j, ..., n | seek_fn = fn)` request arbitrary radii or predicate-driven neighborhoods with automatic boundary clamping.
+- Byte-pattern literals like `[0x7F, 'E', 'L', 'F']` are lowered to TU-local `static const uint8_t` buffers and can be passed straight into the file helpers without manual array declarations.
+- Python-style enumerations `for value in [1, 2, 3, 4] { ... }` lower to synthesized constant arrays and ordinary loops so inline lists stay ergonomic.
 
 The number baseball example now uses the new loop sugar so that its structure matches the concept draft more closely.
+
+### Showcase Snippets
+
+```margo
+@import file/core
+@import std/io
+
+fn dump_zip_offsets(string path) {
+    weird(FILE, 1) fp = fopen(path, "rb")
+    if !fp return
+
+    bool hits[] = return_all_bitmask_offsets(fp, [0x50, 0x4B, 0x03, 0x04])
+    for slot in [0, 32, 64, 96] {
+        print("slot ", slot, ": ", hits[slot])
+    }
+    for pos in hits.indices() {
+        if hits[pos] print("central dir? @", pos)
+    }
+    fclose(fp)
+}
+```
+
+```margo
+fn sum_hotspots(auto_matrix field) {
+    mat_find(field, 10, 0.001) {
+        print("exact 10 at", mat_index[0], mat_index[1])
+    }
+    mat_for(field, fn(i, j, cell) bool {
+        auto neigh = mat_neighbor()
+        auto spikes = mat_neighbor(field, i, j, 2, seek_fn = fn(nc) bool { return nc.value > cell })
+        neigh.for_each(fn(nc) {
+            if nc.value > cell * 2 print("spike", nc.index[0], nc.index[1])
+        })
+        if spikes.count == 0 && cell > 0 {
+            print("isolated hot cell", i, j)
+        }
+        return true
+    })
+}
+```
 
 ## Self-Hosting Minimum Support
 
@@ -124,6 +168,14 @@ C++ binding support is a future milestone.  The directive is preserved as a comm
 | `@import std/assert` | `<assert.h>` |
 | `@import std/errno` | `<errno.h>` |
 | `@import std/file` | `<stdio.h>` |
+| `@import file/core` | `<stdio.h>` + binary pattern helpers |
+
+### File Pattern Helpers (`@import file/core`)
+- `seek_from_file(stream, pattern)` scans from the current `FILE *` position to EOF, returning `true` when the byte pattern is present while restoring the original file pointer afterward.
+- `pos_from_file(stream, pattern)` exposes the first match offset as a `long` (`-1` if absent) without moving the pointer.
+- `jmp_from_file(stream, pattern)` combines the two: it locates the pattern and performs `fseek(stream, offset, SEEK_SET)` on success, returning a boolean for convenience.
+- `return_all_bitmask_offsets(stream, pattern)` scans the whole file once, producing a RAII `bitmask_view { bool *bits; size_t len; }` whose entries mark every matching offset. You can capture it via `bool hits[] = return_all_bitmask_offsets(...)` and iterate over `hits.indices()`.
+- Patterns accept either buffers plus lengths or inline literals such as `[0x7F, 'E', 'L', 'F']`; the compiler hoists those literals into deduplicated `static const uint8_t` arrays automatically.
 
 ### Thread/Process Runtime (Experimental)
 - `@import threads/core` — exposes a header-only worker scheduler built on top of `pthread`. Provides `threads_cluster_t`, `threads_mailbox_t`, and helpers such as `threads_spawn`, `threads_spawn_isolate`, and `threads_mailbox_send/recv`.

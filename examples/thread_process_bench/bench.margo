@@ -1,0 +1,154 @@
+@import std/io
+@import std/stdlib
+@import c/stdint
+@import threads/core
+@import process
+
+struct PipelineCtx {
+    threads_cluster_t cluster
+    threads_mailbox_t raw
+    threads_mailbox_t parsed
+    int iterations
+    uint64_t checksum
+}
+
+struct ProcessCtx {
+    process_channel_t channel
+    int per_worker
+    int worker_count
+    uint64_t sum
+}
+
+struct ProcessChildArgs {
+    int start
+    int count
+}
+
+fn void pipeline_reader(int id, weird(void, 1) payload) {
+    weird(struct PipelineCtx, 1) ctx = payload
+    auto start = threads_now_ns()
+    for value = 0; < ctx->iterations; ++ {
+        threads_mailbox_send(&ctx->raw, &value)
+    }
+    threads_mailbox_close(&ctx->raw)
+    auto elapsed = threads_ns_to_ms(threads_now_ns() - start)
+    print("reader", id, "sent", ctx->iterations, "values in", elapsed, "ms")
+}
+
+fn void pipeline_parser(int id, weird(void, 1) payload) {
+    weird(struct PipelineCtx, 1) ctx = payload
+    int value = 0
+    while threads_mailbox_recv(&ctx->raw, &value) {
+        value *= 2
+        threads_mailbox_send(&ctx->parsed, &value)
+    }
+    threads_mailbox_close(&ctx->parsed)
+    print("parser", id, "drained raw mailbox")
+}
+
+fn void pipeline_sink(int id, weird(void, 1) payload) {
+    weird(struct PipelineCtx, 1) ctx = payload
+    int value = 0
+    auto consumed = 0
+    auto start = threads_now_ns()
+    while threads_mailbox_recv(&ctx->parsed, &value) {
+        ctx->checksum += (uint64_t)value
+        consumed++
+    }
+    auto elapsed = threads_ns_to_ms(threads_now_ns() - start)
+    print("[threads] sink", id, "consumed", consumed, "values in", elapsed, "ms")
+}
+
+fn void run_thread_pipeline(int iterations) {
+    struct PipelineCtx ctx = {0}
+    ctx.iterations = iterations
+    if !threads_mailbox_init(&ctx.raw, sizeof(int), 2048) {
+        print("failed to init raw mailbox")
+        return
+    }
+    if !threads_mailbox_init(&ctx.parsed, sizeof(int), 2048) {
+        print("failed to init parsed mailbox")
+        threads_mailbox_destroy(&ctx.raw)
+        return
+    }
+    threads_cluster_init(&ctx.cluster, "pipeline")
+
+    threads_job_handle_t reader = {0}
+    threads_job_handle_t parser = {0}
+    threads_job_handle_t sink = {0}
+
+    threads_spawn(&ctx.cluster, pipeline_reader, &ctx, &reader)
+    threads_spawn(&ctx.cluster, pipeline_parser, &ctx, &parser)
+    threads_spawn_isolate(&ctx.cluster, pipeline_sink, &ctx, &sink)
+
+    threads_job_join(&reader)
+    threads_job_join(&parser)
+    threads_job_join(&sink)
+
+    print("[threads] checksum", ctx.checksum)
+    threads_mailbox_destroy(&ctx.raw)
+    threads_mailbox_destroy(&ctx.parsed)
+    threads_cluster_destroy(&ctx.cluster)
+}
+
+fn void process_child(weird(process_channel_t, 1) chan, weird(void, 1) payload) {
+    weird(struct ProcessChildArgs, 1) args = payload
+    auto current = args->start
+    for i = 0; < args->count; ++ {
+        process_channel_send(chan, &current)
+        current++
+    }
+}
+
+fn void run_process_pipeline(int per_worker, int workers) {
+    if workers <= 0 return
+    struct ProcessCtx ctx = {0}
+    ctx.per_worker = per_worker
+    ctx.worker_count = workers
+
+    if !process_channel_init(&ctx.channel, 1024, sizeof(int)) {
+        print("failed to init process channel")
+        return
+    }
+
+    process_cluster_t cluster
+    process_cluster_init(&cluster, "ingest")
+
+    auto total = per_worker * workers
+    struct ProcessChildArgs args[8]
+    if workers > 8 {
+        print("worker cap is 8 in this bench")
+        process_channel_destroy(&ctx.channel)
+        return
+    }
+
+    for idx = 0; < workers; ++ {
+        args[idx].start = idx * per_worker
+        args[idx].count = per_worker
+        process_cluster_spawn(&cluster, process_child, &ctx.channel, &args[idx])
+    }
+
+    int value = 0
+    auto received = 0
+    auto start = threads_now_ns()
+    while received < total {
+        if !process_channel_recv(&ctx.channel, &value) {
+            break
+        }
+        ctx.sum += (uint64_t)value
+        received++
+    }
+    process_channel_close(&ctx.channel)
+    process_cluster_wait_all(&cluster)
+    auto elapsed = threads_ns_to_ms(threads_now_ns() - start)
+    print("[process] received", received, "values sum", ctx.sum, "time", elapsed, "ms")
+    process_channel_destroy(&ctx.channel)
+}
+
+fn start(int argc, weird(char, 2) argv) {
+    print("--- Thread pipeline ---")
+    run_thread_pipeline(200000)
+    print("--- Process pipeline ---")
+    run_process_pipeline(50000, 2)
+    return 0
+}

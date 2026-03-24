@@ -2,6 +2,7 @@
 @import std/file
 @import std/string
 @import c/stdint
+@import file/core
 
 struct Graph {
     uint32_t num_nodes
@@ -45,9 +46,26 @@ fn void release_graph(weird(struct Graph, 1) graph) {
     graph->num_edges = 0
 }
 
+fn size_t guard_graph_stream(weird(FILE, 1) file) {
+    if !file return 0
+    bool zip_hits[] = return_all_bitmask_offsets(file, [0x50, 0x4B, 0x03, 0x04])
+    if zip_hits.len > 0 && zip_hits[0] {
+        print("Graph file appears compressed (PK header detected)")
+        return 0
+    }
+    size_t file_bytes = zip_hits.len
+    fseek(file, 0, SEEK_SET)
+    return file_bytes
+}
+
 fn load_graph(string path, weird(struct Graph, 1) graph) {
     weird(FILE, 1) file = safe_open_readonly(path)
     if !file return 1
+    size_t file_bytes = guard_graph_stream(file)
+    if file_bytes == 0 {
+        safe_close(file)
+        return 1
+    }
 
     uint32_t nodes = 0
     uint64_t edges = 0
@@ -78,6 +96,15 @@ fn load_graph(string path, weird(struct Graph, 1) graph) {
         return 1
     }
     safe_close(file)
+
+    // Treat the serialized graph as a flattened linear-algebra vector and verify its length.
+    size_t expected_bytes = sizeof(uint32_t) + sizeof(uint64_t)
+    expected_bytes += (size_t)(nodes + 1) * sizeof(uint64_t)
+    expected_bytes += (size_t)edges * sizeof(uint32_t)
+    if file_bytes != expected_bytes {
+        print("Graph file size mismatch (expected ", expected_bytes, ", saw ", file_bytes, " bytes)", sep = "")
+        return 1
+    }
 
     if graph->offsets[nodes] != edges {
         print("Graph file corrupted")

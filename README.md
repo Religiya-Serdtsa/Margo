@@ -68,6 +68,7 @@ C++ 바인딩 지원은 향후 마일스톤이다. 지시자는 주석으로 보
 | `@import std/assert` | `<assert.h>` |
 | `@import std/errno` | `<errno.h>` |
 | `@import std/file` | `<stdio.h>` |
+| `@import file/core` | `<stdio.h>` + 파일 패턴 검색 헬퍼 |
 
 ### 쓰레드/프로세스 런타임 (Experimental)
 - `@import threads/core` — `threads_cluster_t`, `threads_mailbox_t`, `_pairs` 조합을 위한 헤더 온리 스케줄러를 노출한다. `pthread` 위에서 동작하며 `threads_spawn`, `threads_spawn_isolate`, `threads_mailbox_*` API를 제공한다.
@@ -122,6 +123,8 @@ make margo-in-margo
   `@import std/io`가 포함된 번역 단위에서만 사용할 수 있다. `Scan`은 공백 단위 토큰을 읽고 성공적으로 파싱한 인자 수를 반환하며, `ScanLine`은 개행까지 읽는다. 여러 인자를 넘기면 각각의 타입에 맞는 `%d`, `%f`, `%s` 등이 자동으로 연결된다.
 - `alloc(size)` / `alloc_and_init(size, literal)`  
   힙에서 바이트 단위 블록을 확보하고, 필요 시 문자열 리터럴을 복사해 준다. 반환 값은 C의 `void*`와 호환되므로 `string`/`weird` 등을 통해 자유롭게 캐스팅하여 사용하면 된다.
+- `seek_from_file(stream, pattern)`, `pos_from_file(stream, pattern)`, `jmp_from_file(stream, pattern)`, `return_all_bitmask_offsets(stream, pattern)`  
+  `@import file/core`를 통해 노출되며, `FILE *` 스트림 안에서 바이트 패턴을 검색하거나 (존재 여부/오프셋) 확인하고, 필요 시 `fseek`으로 점프한다. `return_all_bitmask_offsets`는 전체 파일을 한 번 훑어 패턴이 시작되는 모든 위치를 bool 마스크로 돌려주며, `[0x7F, 'E', 'L', 'F']`처럼 정적 바이트 배열 리터럴을 즉시 인자로 넘길 수 있다. 컴파일러가 자동으로 상수 버퍼를 생성하고 `hits.indices()` 같은 도우미도 제공한다.
 
 ### 실행형 예제 (숫자 야구)
 
@@ -143,8 +146,52 @@ make
 - `for idx=0; <N; ++ { ... }` 형태의 암시적 루프 문법을 정규 C `for` 헤더로 재작성한다. 초기화식에서 추출한 변수 이름을 조건/증감식의 생략된 식별자 앞에 자동으로 붙여준다.
 - `if v == 1 return 100`처럼 괄호를 생략한 조건문은 조건식을 자동으로 `()`로 감싸고, 이후에 이어지는 문장이나 블록 앞의 공백도 그대로 보존한다.
 - 함수 앞에 붙는 `@decorator` 토큰은 주석으로 치환되어 C 컴파일러가 이해할 수 있도록 정리된다.
+- `mat_find(arr, target, precision) { ... }`와 `mat_for(arr, fn_name)`는 행렬 차수를 직접 명시하지 않아도 전체 배열을 순회하거나 근사값을 찾을 수 있는 고수준 행렬 전용 구문이다. 일치 지점을 찾았을 때만 블록이 실행되며, 복수 차수 인덱싱은 언어가 자동으로 관리하고, 내부적으로는 선형대수학식 평탄화를 이용해 캐시 지역성을 확보한다.
+- `mat_neighbor()`는 `mat_for` 안에서 암시적으로 현재 좌표의 반경 1 이웃을, 스코프 밖에서는 `mat_neighbor(arr, i, j, ..., n | seek_fn = fn)` 형태로 임의 반경/필터를 적용해 안전하게 잘린 이웃 뷰를 돌려준다.
+- `[0x01, 0x02, ...]` 형태의 바이트 패턴 리터럴은 별도 선언 없이 정적 `uint8_t` 버퍼로 승격되어 파일 패턴 헬퍼나 기타 저수준 API에 즉시 전달할 수 있다.
+- `for x in [1, 2, 3, 4] { ... }`처럼 Python 스타일의 리스트 열거 구문을 지원한다. 내부적으로는 숨김 상수 배열을 만든 뒤 기존 `for` 문으로 내린다.
 
 숫자 야구 예제는 위 문법을 사용해 콘셉트 문서와 유사한 스타일을 미리 체험할 수 있다.
+
+### Showcase 예시
+
+```margo
+@import file/core
+@import std/io
+
+fn dump_zip_offsets(string path) {
+    weird(FILE, 1) fp = fopen(path, "rb")
+    if !fp return
+
+    bool hits[] = return_all_bitmask_offsets(fp, [0x50, 0x4B, 0x03, 0x04])
+    for slot in [0, 32, 64, 96] {
+        print("slot ", slot, ": ", hits[slot])
+    }
+    for pos in hits.indices() {
+        if hits[pos] print("central dir? @", pos)
+    }
+    fclose(fp)
+}
+```
+
+```margo
+fn sum_hotspots(auto_matrix field) {
+    mat_find(field, 10, 0.001) {
+        print("exact 10 at", mat_index[0], mat_index[1])
+    }
+    mat_for(field, fn(i, j, cell) bool {
+        auto neigh = mat_neighbor()
+        auto spikes = mat_neighbor(field, i, j, 2, seek_fn = fn(nc) bool { return nc.value > cell })
+        neigh.for_each(fn(nc) {
+            if nc.value > cell * 2 print("spike", nc.index[0], nc.index[1])
+        })
+        if spikes.count == 0 && cell > 0 {
+            print("isolated hot cell", i, j)
+        }
+        return true
+    })
+}
+```
 
 ## 튜토리얼 모음
 
