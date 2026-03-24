@@ -69,6 +69,11 @@ C++ 바인딩 지원은 향후 마일스톤이다. 지시자는 주석으로 보
 | `@import std/errno` | `<errno.h>` |
 | `@import std/file` | `<stdio.h>` |
 
+### 쓰레드/프로세스 런타임 (Experimental)
+- `@import threads/core` — `threads_cluster_t`, `threads_mailbox_t`, `_pairs` 조합을 위한 헤더 온리 스케줄러를 노출한다. `pthread` 위에서 동작하며 `threads_spawn`, `threads_spawn_isolate`, `threads_mailbox_*` API를 제공한다.
+- `@import process` / `@import process/core` — `process_channel_t`, `process_cluster_t`를 포함한 멀티프로세스 통신 도구. POSIX `fork` + 공유 메모리 + 채널을 묶어 Go 스타일 `send/recv`를 흉내 낸다.
+- 두 런타임을 묶어 보여주는 최초의 벤치는 `examples/thread_process_bench`에 포함된다.
+
 ### 의미 분석 패스 (`src/sema.c`)
 컴파일 전에 토큰 스트림을 분석한다:
 - **함수 시그니처 레지스트리**: 모든 `fn` 선언 기록, 호출 위치에서 인자 수 검증.

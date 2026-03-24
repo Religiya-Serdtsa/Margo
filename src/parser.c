@@ -357,6 +357,13 @@ bool parser_parse_import(const char *source,
     } else if (strncmp(sanitized, "std/", 4) == 0) {
         kind = IMPORT_KIND_STD;
         payload = sanitized + 4;
+    } else if (strncmp(sanitized, "threads/core", 12) == 0 && sanitized[12] == '\0') {
+        kind = IMPORT_KIND_THREADS_CORE;
+        payload = "threads/core";
+    } else if ((strncmp(sanitized, "process/core", 12) == 0 && sanitized[12] == '\0') ||
+               (strcmp(sanitized, "process") == 0)) {
+        kind = IMPORT_KIND_PROCESS_CORE;
+        payload = "process/core";
     } else {
         diagnostic_set(diag, at->line, "unsupported import prefix in '%s'", sanitized);
         free(sanitized);

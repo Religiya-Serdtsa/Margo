@@ -7,6 +7,9 @@ LIBTTAK_LIB := $(abspath $(LIBTTAK_DIR)/lib/libttak.a)
 LIBTTAK_BUNDLE := build/libttak_bundle.tar
 LIBTTAK_EMBED_SRC := src/libttak_bundle.c
 LIBTTAK_EMBED_HDR := src/libttak_bundle.h
+RUNTIME_DIR := runtime
+RUNTIME_ABS := $(abspath $(RUNTIME_DIR))
+RUNTIME_INCLUDE_DIR := $(RUNTIME_DIR)/include
 
 MARGO_SRCS = \
 	src/main.c \
@@ -34,9 +37,9 @@ build/margo: margo-in-margo
 $(LIBTTAK_LIB):
 	$(MAKE) -C $(LIBTTAK_DIR) EMBEDDED=1
 
-$(LIBTTAK_BUNDLE): $(LIBTTAK_LIB)
+$(LIBTTAK_BUNDLE): $(LIBTTAK_LIB) $(RUNTIME_INCLUDE_DIR)/margo_threads/core.h $(RUNTIME_INCLUDE_DIR)/margo_process/core.h
 	@mkdir -p $(@D)
-	tar -cf $@ -C $(LIBTTAK_DIR) include lib/libttak.a
+	tar -cf $@ -C $(LIBTTAK_DIR) include lib/libttak.a -C $(RUNTIME_ABS) include/margo_threads include/margo_process
 
 $(LIBTTAK_EMBED_SRC): $(LIBTTAK_BUNDLE)
 	@echo "Embedding libttak bundle"

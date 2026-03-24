@@ -870,6 +870,17 @@ static bool insert_implicit_semicolons(char **buffer, size_t *size, diagnostic_t
     char last_non_ws = '\0';
     char prev_char = '\0';
     bool line_has_assignment = false;
+    bool line_closed_aggregate = false;
+    bool pending_aggregate_keyword = false;
+    int pending_aggregate_paren_depth = 0;
+    int paren_depth = 0;
+    int brace_depth = 0;
+    int *aggregate_stack = NULL;
+    size_t aggregate_stack_count = 0;
+    size_t aggregate_stack_capacity = 0;
+    bool in_identifier = false;
+    char ident_buf[64];
+    size_t ident_len = 0;
     for (size_t i = 0; i < len; ++i) {
         char c = src[i];
         char next = (i + 1 < len) ? src[i + 1] : '\0';
@@ -878,7 +889,8 @@ static bool insert_implicit_semicolons(char **buffer, size_t *size, diagnostic_t
                 in_user_section = pending_user_state;
             } else if (!line_is_directive && in_user_section && !in_line_comment && !in_block_comment) {
                 bool need_semicolon = should_insert_semicolon(last_non_ws);
-                if (!need_semicolon && last_non_ws == '}' && line_has_assignment) {
+                if (!need_semicolon && last_non_ws == '}' &&
+                    (line_has_assignment || line_closed_aggregate)) {
                     need_semicolon = true;
                 }
                 if (need_semicolon) {
@@ -902,6 +914,7 @@ static bool insert_implicit_semicolons(char **buffer, size_t *size, diagnostic_t
             last_non_ws = '\0';
             line_has_assignment = false;
             prev_char = '\0';
+            line_closed_aggregate = false;
             continue;
         }
         if (start_of_line) {
@@ -998,15 +1011,90 @@ static bool insert_implicit_semicolons(char **buffer, size_t *size, diagnostic_t
                 prev_char != '!' && prev_char != '=') {
                 line_has_assignment = true;
             }
+            if (pending_aggregate_keyword) {
+                if (c == '=' || c == ';' || c == ',') {
+                    pending_aggregate_keyword = false;
+                }
+            }
+            bool is_ident_char = (c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') ||
+                                  (c >= 'A' && c <= 'Z'));
+            if (is_ident_char) {
+                if (!in_identifier) {
+                    in_identifier = true;
+                    ident_len = 0;
+                }
+                if (ident_len + 1 < sizeof(ident_buf)) {
+                    ident_buf[ident_len++] = (char)tolower((unsigned char)c);
+                }
+            } else if (in_identifier) {
+                ident_buf[ident_len] = '\0';
+                if (strcmp(ident_buf, "struct") == 0 || strcmp(ident_buf, "union") == 0 ||
+                    strcmp(ident_buf, "enum") == 0) {
+                    pending_aggregate_keyword = true;
+                    pending_aggregate_paren_depth = paren_depth;
+                }
+                in_identifier = false;
+                ident_len = 0;
+            }
+            if (!is_ident_char) {
+                in_identifier = false;
+                ident_len = 0;
+            }
+            if (c == '(') {
+                paren_depth++;
+            } else if (c == ')') {
+                if (paren_depth > 0) {
+                    paren_depth--;
+                    if (pending_aggregate_keyword && paren_depth < pending_aggregate_paren_depth) {
+                        pending_aggregate_keyword = false;
+                    }
+                }
+            }
+            if (c == '{') {
+                brace_depth++;
+                if (pending_aggregate_keyword && paren_depth == pending_aggregate_paren_depth) {
+                    if (aggregate_stack_count == aggregate_stack_capacity) {
+                        size_t new_capacity = aggregate_stack_capacity ? aggregate_stack_capacity * 2 : 8;
+                        int *new_items = realloc(aggregate_stack, new_capacity * sizeof(int));
+                        if (!new_items) {
+                            free(out);
+                            free(aggregate_stack);
+                            diagnostic_set(diag, 0, "out of memory while tracking aggregate braces");
+                            return false;
+                        }
+                        aggregate_stack = new_items;
+                        aggregate_stack_capacity = new_capacity;
+                    }
+                    aggregate_stack[aggregate_stack_count++] = brace_depth;
+                    pending_aggregate_keyword = false;
+                }
+            } else if (c == '}') {
+                if (brace_depth > 0) {
+                    if (aggregate_stack_count > 0 &&
+                        aggregate_stack[aggregate_stack_count - 1] == brace_depth) {
+                        aggregate_stack_count--;
+                        line_closed_aggregate = true;
+                    }
+                    brace_depth--;
+                }
+            }
         }
         if (!in_line_comment && !in_block_comment && !part_of_comment_delim && !isspace((unsigned char)c)) {
             prev_char = c;
         }
     }
-    if (in_user_section && !in_line_comment && !in_block_comment && should_insert_semicolon(last_non_ws)) {
-        out[w++] = ';';
+    if (in_user_section && !in_line_comment && !in_block_comment) {
+        bool need_semicolon = should_insert_semicolon(last_non_ws);
+        if (!need_semicolon && last_non_ws == '}' &&
+            (line_has_assignment || line_closed_aggregate)) {
+            need_semicolon = true;
+        }
+        if (need_semicolon) {
+            out[w++] = ';';
+        }
     }
     out[w] = '\0';
+    free(aggregate_stack);
     free(*buffer);
     *buffer = out;
     *size = w;
@@ -1121,6 +1209,20 @@ static bool emit_include_for_import(FILE *out, const import_directive_t *dir, di
     if (dir->kind == IMPORT_KIND_STD_FILE) {
         if (fputs("#include <stdio.h>\n", out) == EOF) {
             diagnostic_set(diag, 0, "failed to emit std/file include");
+            return false;
+        }
+        return true;
+    }
+    if (dir->kind == IMPORT_KIND_THREADS_CORE) {
+        if (fputs("#include <margo_threads/core.h>\n", out) == EOF) {
+            diagnostic_set(diag, 0, "failed to emit threads/core include");
+            return false;
+        }
+        return true;
+    }
+    if (dir->kind == IMPORT_KIND_PROCESS_CORE) {
+        if (fputs("#include <margo_process/core.h>\n", out) == EOF) {
+            diagnostic_set(diag, 0, "failed to emit process/core include");
             return false;
         }
         return true;

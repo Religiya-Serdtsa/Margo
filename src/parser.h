@@ -26,6 +26,9 @@
  *  - IMPORT_KIND_STD_ASSERT  maps `@import std/assert`  -> <assert.h>
  *  - IMPORT_KIND_STD_ERRNO   maps `@import std/errno`   -> <errno.h>
  *  - IMPORT_KIND_STD_FILE    maps `@import std/file`    -> <stdio.h>
+ *  - IMPORT_KIND_THREADS_CORE maps `@import threads/core` -> "threads/core.h"
+ *  - IMPORT_KIND_PROCESS_CORE maps `@import process` or `@import process/core`
+ *                              into "process/core.h"
  */
 typedef enum {
     IMPORT_KIND_C,
@@ -39,6 +42,8 @@ typedef enum {
     IMPORT_KIND_STD_ASSERT,
     IMPORT_KIND_STD_ERRNO,
     IMPORT_KIND_STD_FILE,
+    IMPORT_KIND_THREADS_CORE,
+    IMPORT_KIND_PROCESS_CORE,
 } import_kind_t;
 
 /**

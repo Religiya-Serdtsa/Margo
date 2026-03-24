@@ -1,24 +1,19 @@
 @import std/io
 @import std/file
 @import std/string
+@import c/stdint
 
-@style c {
-    struct Graph {
-        uint32_t num_nodes;
-        uint64_t num_edges;
-        uint64_t *offsets;
-        uint32_t *edges;
-    };
+struct Graph {
+    uint32_t num_nodes
+    uint64_t num_edges
+    uint64_t *offsets
+    uint32_t *edges
+}
 
-    struct BFSStats {
-        uint64_t visited_nodes;
-        uint64_t distance_sum;
-        int32_t max_distance;
-    };
-
-    extern FILE *fopen(const char *path, const char *mode);
-    extern int fclose(FILE *stream);
-    extern size_t fread(void *ptr, size_t size, size_t count, FILE *stream);
+struct BFSStats {
+    uint64_t visited_nodes
+    uint64_t distance_sum
+    int32_t max_distance
 }
 
 fn weird(FILE, 1) safe_open_readonly(string path) {

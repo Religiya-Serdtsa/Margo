@@ -125,6 +125,11 @@ C++ binding support is a future milestone.  The directive is preserved as a comm
 | `@import std/errno` | `<errno.h>` |
 | `@import std/file` | `<stdio.h>` |
 
+### Thread/Process Runtime (Experimental)
+- `@import threads/core` — exposes a header-only worker scheduler built on top of `pthread`. Provides `threads_cluster_t`, `threads_mailbox_t`, and helpers such as `threads_spawn`, `threads_spawn_isolate`, and `threads_mailbox_send/recv`.
+- `@import process` / `@import process/core` — wraps POSIX `fork`, shared memory, and futex-friendly channels via `process_channel_t`/`process_cluster_t`. Mimics Go-style `chan <- val` semantics in plain C.
+- The new `examples/thread_process_bench` folder wires both modules together to provide a combined throughput benchmark.
+
 ### Semantic Analysis Pass (`src/sema.c`)
 Runs over the token stream before code generation:
 - **Function signature registry**: records all `fn` declarations; validates call-site argument counts.
