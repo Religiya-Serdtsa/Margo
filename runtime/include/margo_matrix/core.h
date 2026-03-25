@@ -3,6 +3,10 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <pthread.h>
+#include <unistd.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -36,6 +40,89 @@ typedef struct {
     void *filter_ctx;
 } neighbor_view;
 
+typedef struct {
+    double *data;
+    double value;
+    size_t begin;
+    size_t end;
+} matrix_fill_job;
+
+typedef struct {
+    auto_matrix lhs;
+    auto_matrix rhs;
+    auto_matrix out;
+    size_t row_begin;
+    size_t row_end;
+} matrix_mul_job;
+
+static inline void *matrix_fill_worker(void *arg) {
+    matrix_fill_job *job = (matrix_fill_job *)arg;
+    if (job->value == 0.0) {
+        memset(job->data + job->begin, 0, (job->end - job->begin) * sizeof(double));
+    } else {
+        for (size_t i = job->begin; i < job->end; ++i) {
+            job->data[i] = job->value;
+        }
+    }
+    return NULL;
+}
+
+static inline void matrix_mul_worker_block(const matrix_mul_job *job) {
+    size_t lhs_cols = job->lhs->cols;
+    size_t rhs_cols = job->rhs->cols;
+    for (size_t r = job->row_begin; r < job->row_end; ++r) {
+        size_t lhs_base = r * lhs_cols;
+        size_t out_base = r * rhs_cols;
+        for (size_t c = 0; c < rhs_cols; ++c) {
+            double acc = 0.0;
+            for (size_t k = 0; k < lhs_cols; ++k) {
+                acc += job->lhs->data[lhs_base + k] * job->rhs->data[k * rhs_cols + c];
+            }
+            job->out->data[out_base + c] = acc;
+        }
+    }
+}
+
+static inline void *matrix_mul_worker(void *arg) {
+    const matrix_mul_job *job = (const matrix_mul_job *)arg;
+    matrix_mul_worker_block(job);
+    return NULL;
+}
+
+static inline size_t margo_matrix_hw_threads(void) {
+    long cpu_count = sysconf(_SC_NPROCESSORS_ONLN);
+    if (cpu_count < 1) {
+        return 1;
+    }
+    return (size_t)cpu_count;
+}
+
+static inline size_t margo_matrix_auto_threads(size_t work_items) {
+    if (work_items < 65536) {
+        return 1;
+    }
+    const char *env_value = getenv("MARGO_MATRIX_THREADS");
+    size_t max_threads = margo_matrix_hw_threads();
+    if (env_value && env_value[0] != '\0') {
+        char *end = NULL;
+        unsigned long parsed = strtoul(env_value, &end, 10);
+        if (end != env_value && *end == '\0' && parsed > 0) {
+            max_threads = (size_t)parsed;
+        }
+    }
+    if (max_threads < 2) {
+        return 1;
+    }
+    size_t suggested = work_items / 16384;
+    if (suggested < 1) {
+        suggested = 1;
+    }
+    if (suggested > max_threads) {
+        suggested = max_threads;
+    }
+    return suggested;
+}
+
 static inline size_t matrix_rows(auto_matrix matrix) {
     return matrix ? matrix->rows : 0;
 }
@@ -51,18 +138,22 @@ static inline size_t matrix_linear_index(auto_matrix matrix, size_t row, size_t 
     return row * matrix->cols + col;
 }
 
+static inline size_t matrix_linear_index_unchecked(auto_matrix matrix, size_t row, size_t col) {
+    return row * matrix->cols + col;
+}
+
 static inline double matrix_get(auto_matrix matrix, size_t row, size_t col) {
     if (!matrix || row >= matrix->rows || col >= matrix->cols) {
         return 0.0;
     }
-    return matrix->data[matrix_linear_index(matrix, row, col)];
+    return matrix->data[matrix_linear_index_unchecked(matrix, row, col)];
 }
 
 static inline void matrix_set(auto_matrix matrix, size_t row, size_t col, double value) {
     if (!matrix || row >= matrix->rows || col >= matrix->cols) {
         return;
     }
-    matrix->data[matrix_linear_index(matrix, row, col)] = value;
+    matrix->data[matrix_linear_index_unchecked(matrix, row, col)] = value;
 }
 
 static inline auto_matrix matrix_fill(size_t rows, size_t cols, double value) {
@@ -76,8 +167,58 @@ static inline auto_matrix matrix_fill(size_t rows, size_t cols, double value) {
     }
     matrix->rows = rows;
     matrix->cols = cols;
-    for (size_t i = 0; i < total; ++i) {
-        matrix->data[i] = value;
+    size_t thread_count = margo_matrix_auto_threads(total);
+    if (thread_count <= 1) {
+        if (value == 0.0) {
+            memset(matrix->data, 0, total * sizeof(double));
+        } else {
+            for (size_t i = 0; i < total; ++i) {
+                matrix->data[i] = value;
+            }
+        }
+        return matrix;
+    }
+
+    pthread_t *threads = (pthread_t *)alloc(thread_count * sizeof(pthread_t));
+    matrix_fill_job *jobs = (matrix_fill_job *)alloc(thread_count * sizeof(matrix_fill_job));
+    if (!threads || !jobs) {
+        if (value == 0.0) {
+            memset(matrix->data, 0, total * sizeof(double));
+        } else {
+            for (size_t i = 0; i < total; ++i) {
+                matrix->data[i] = value;
+            }
+        }
+        return matrix;
+    }
+
+    size_t base_chunk = total / thread_count;
+    size_t extra = total % thread_count;
+    size_t cursor = 0;
+    for (size_t t = 0; t < thread_count; ++t) {
+        size_t span = base_chunk + (t < extra ? 1 : 0);
+        jobs[t].data = matrix->data;
+        jobs[t].value = value;
+        jobs[t].begin = cursor;
+        jobs[t].end = cursor + span;
+        cursor += span;
+        if (pthread_create(&threads[t], NULL, matrix_fill_worker, &jobs[t]) != 0) {
+            for (size_t joined = 0; joined < t; ++joined) {
+                pthread_join(threads[joined], NULL);
+            }
+            if (value == 0.0) {
+                memset(matrix->data, 0, total * sizeof(double));
+            } else {
+                for (size_t i = 0; i < total; ++i) {
+                    matrix->data[i] = value;
+                }
+            }
+            return matrix;
+        }
+    }
+
+    for (size_t t = 0; t < thread_count; ++t) {
+        pthread_join(threads[t], NULL);
     }
     return matrix;
 }
@@ -125,8 +266,9 @@ static inline auto_matrix matrix_transpose(auto_matrix matrix) {
         return NULL;
     }
     for (size_t r = 0; r < matrix->rows; ++r) {
+        size_t src_base = r * matrix->cols;
         for (size_t c = 0; c < matrix->cols; ++c) {
-            matrix_set(out, c, r, matrix_get(matrix, r, c));
+            out->data[c * out->cols + r] = matrix->data[src_base + c];
         }
     }
     return out;
@@ -140,14 +282,47 @@ static inline auto_matrix matrix_mul(auto_matrix lhs, auto_matrix rhs) {
     if (!out) {
         return NULL;
     }
-    for (size_t r = 0; r < matrix_rows(lhs); ++r) {
-        for (size_t c = 0; c < matrix_cols(rhs); ++c) {
-            double acc = 0.0;
-            for (size_t k = 0; k < matrix_cols(lhs); ++k) {
-                acc += matrix_get(lhs, r, k) * matrix_get(rhs, k, c);
+    size_t lhs_rows = lhs->rows;
+    size_t thread_count = margo_matrix_auto_threads(lhs_rows * rhs->cols * lhs->cols);
+    if (thread_count <= 1 || lhs_rows < 2) {
+        matrix_mul_job single = { lhs, rhs, out, 0, lhs_rows };
+        matrix_mul_worker_block(&single);
+        return out;
+    }
+
+    if (thread_count > lhs_rows) {
+        thread_count = lhs_rows;
+    }
+    pthread_t *threads = (pthread_t *)alloc(thread_count * sizeof(pthread_t));
+    matrix_mul_job *jobs = (matrix_mul_job *)alloc(thread_count * sizeof(matrix_mul_job));
+    if (!threads || !jobs) {
+        matrix_mul_job single = { lhs, rhs, out, 0, lhs_rows };
+        matrix_mul_worker_block(&single);
+        return out;
+    }
+
+    size_t base_rows = lhs_rows / thread_count;
+    size_t extra_rows = lhs_rows % thread_count;
+    size_t cursor = 0;
+    for (size_t t = 0; t < thread_count; ++t) {
+        size_t span = base_rows + (t < extra_rows ? 1 : 0);
+        jobs[t].lhs = lhs;
+        jobs[t].rhs = rhs;
+        jobs[t].out = out;
+        jobs[t].row_begin = cursor;
+        jobs[t].row_end = cursor + span;
+        cursor += span;
+        if (pthread_create(&threads[t], NULL, matrix_mul_worker, &jobs[t]) != 0) {
+            for (size_t joined = 0; joined < t; ++joined) {
+                pthread_join(threads[joined], NULL);
             }
-            matrix_set(out, r, c, acc);
+            matrix_mul_job fallback = { lhs, rhs, out, 0, lhs_rows };
+            matrix_mul_worker_block(&fallback);
+            return out;
         }
+    }
+    for (size_t t = 0; t < thread_count; ++t) {
+        pthread_join(threads[t], NULL);
     }
     return out;
 }
