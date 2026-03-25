@@ -65,7 +65,29 @@ static inline void matrix_set(auto_matrix matrix, size_t row, size_t col, double
     matrix->data[matrix_linear_index(matrix, row, col)] = value;
 }
 
-static inline auto_matrix matrix_fill(size_t rows, size_t cols, double value) {
+static inline double *matrix_data(auto_matrix matrix) {
+    return matrix ? matrix->data : NULL;
+}
+
+static inline const double *matrix_data_const(auto_matrix matrix) {
+    return matrix ? matrix->data : NULL;
+}
+
+static inline double *matrix_row_ptr(auto_matrix matrix, size_t row) {
+    if (!matrix || row >= matrix->rows) {
+        return NULL;
+    }
+    return &matrix->data[row * matrix->cols];
+}
+
+static inline const double *matrix_row_ptr_const(auto_matrix matrix, size_t row) {
+    if (!matrix || row >= matrix->rows) {
+        return NULL;
+    }
+    return &matrix->data[row * matrix->cols];
+}
+
+static inline auto_matrix matrix_alloc(size_t rows, size_t cols) {
     if (!rows || !cols) {
         return NULL;
     }
@@ -76,6 +98,15 @@ static inline auto_matrix matrix_fill(size_t rows, size_t cols, double value) {
     }
     matrix->rows = rows;
     matrix->cols = cols;
+    return matrix;
+}
+
+static inline auto_matrix matrix_fill(size_t rows, size_t cols, double value) {
+    auto_matrix matrix = matrix_alloc(rows, cols);
+    if (!matrix) {
+        return NULL;
+    }
+    size_t total = rows * cols;
     for (size_t i = 0; i < total; ++i) {
         matrix->data[i] = value;
     }

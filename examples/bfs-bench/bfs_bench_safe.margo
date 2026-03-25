@@ -129,50 +129,74 @@ fn run_bfs(weird(struct Graph, 1) graph, weird(struct BFSStats, 1) stats) {
         return 1
     }
 
-    auto node_count = graph->num_nodes
-    auto_matrix queue = matrix_fill(1, node_count, 0)
-    auto_matrix distances = matrix_fill(1, node_count, -1)
+    uint32_t node_count = graph->num_nodes
+    auto_matrix queue = matrix_alloc(1, node_count)
+    auto_matrix distances = matrix_alloc(1, node_count)
 
     if !queue || !distances {
         return 1
     }
 
-    auto head = 0
-    auto tail = 0
-    auto size = 0
+    double *queue_view = matrix_row_ptr(queue, 0)
+    double *distance_view = matrix_row_ptr(distances, 0)
+    if !queue_view || !distance_view {
+        return 1
+    }
+    uint64_t *queue_slots = (uint64_t *)queue_view
+    uint64_t *distance_slots = (uint64_t *)distance_view
+    if !queue_slots || !distance_slots {
+        return 1
+    }
+    uint8_t *visited_mask = alloc(node_count)
+    if !visited_mask {
+        return 1
+    }
+    uint32_t visit_idx = 0
+    for visit_idx = 0; < node_count; ++ {
+        visited_mask[visit_idx] = 0
+    }
 
-    matrix_set(queue, 0, tail, 0)
+    uint32_t head = 0
+    uint32_t tail = 0
+    uint32_t size = 0
+
+    queue_slots[tail] = 0
     tail = (tail + 1 == node_count) ? 0 : (tail + 1)
     size = 1
-    matrix_set(distances, 0, 0, 0)
+    distance_slots[0] = 0
+    visited_mask[0] = 1
 
-    auto visited = 1
-    auto distance_sum = 0
-    auto max_distance = 0
+    uint64_t visited = 1
+    uint64_t distance_sum = 0
+    int32_t max_distance = 0
 
     while size > 0 {
-        auto node = (uint32_t)matrix_get(queue, 0, head)
+        uint32_t node = (uint32_t)queue_slots[head]
         head = (head + 1 == node_count) ? 0 : (head + 1)
         size--
 
-        auto base_distance = (int32_t)matrix_get(distances, 0, node)
-        auto begin = graph->offsets[node]
-        auto end = graph->offsets[node + 1]
+        int32_t base_distance = (int32_t)distance_slots[node]
+        uint64_t begin = graph->offsets[node]
+        uint64_t end = graph->offsets[node + 1]
 
         for idx = begin; < end; ++ {
-            auto neighbor = graph->edges[idx]
-            if ((int32_t)matrix_get(distances, 0, neighbor) != -1) continue
+            uint32_t neighbor = graph->edges[idx]
+            if (visited_mask[neighbor]) continue
+            if (idx + 32 < end) {
+                __builtin_prefetch(&graph->edges[idx + 32])
+            }
 
-            auto next_distance = base_distance + 1
-            matrix_set(distances, 0, neighbor, next_distance)
-            matrix_set(queue, 0, tail, neighbor)
+            int32_t next_distance = base_distance + 1
+            distance_slots[neighbor] = (uint64_t)next_distance
+            queue_slots[tail] = neighbor
             tail = (tail + 1 == node_count) ? 0 : (tail + 1)
             size++
             visited++
-            distance_sum += next_distance
+            distance_sum += (uint64_t)next_distance
             if next_distance > max_distance {
                 max_distance = next_distance
             }
+            visited_mask[neighbor] = 1
         }
     }
 

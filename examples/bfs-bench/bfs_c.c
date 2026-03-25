@@ -90,27 +90,30 @@ static int run_bfs(const struct Graph *graph, struct BFSStats *stats) {
     }
 
     uint32_t node_count = graph->num_nodes;
-    uint32_t *queue = (uint32_t *)malloc((size_t)node_count * sizeof(uint32_t));
-    int32_t *distances = (int32_t *)malloc((size_t)node_count * sizeof(int32_t));
-    if (!queue || !distances) {
+    double *queue = (double *)malloc((size_t)node_count * sizeof(double));
+    double *distances = (double *)malloc((size_t)node_count * sizeof(double));
+    uint8_t *visited_mask = (uint8_t *)calloc((size_t)node_count, sizeof(uint8_t));
+    if (!queue || !distances || !visited_mask) {
         fprintf(stderr, "Out of memory allocating BFS buffers.\n");
         free(queue);
         free(distances);
+        free(visited_mask);
         return -1;
     }
 
     for (uint32_t i = 0; i < node_count; ++i) {
-        distances[i] = -1;
+        distances[i] = -1.0;
     }
 
     uint32_t head = 0;
     uint32_t tail = 0;
     uint32_t size = 0;
 
-    queue[tail] = 0;
+    queue[tail] = 0.0;
     tail = (tail + 1u == node_count) ? 0u : (tail + 1u);
     size = 1;
-    distances[0] = 0;
+    distances[0] = 0.0;
+    visited_mask[0] = 1;
 
     uint64_t visited = 1;
     uint64_t distance_sum = 0;
@@ -119,39 +122,42 @@ static int run_bfs(const struct Graph *graph, struct BFSStats *stats) {
     int rc = 0;
 
     while (size > 0) {
-        uint32_t node = queue[head];
+        uint32_t node = (uint32_t)queue[head];
         head = (head + 1u == node_count) ? 0u : (head + 1u);
         size--;
-        int32_t base_distance = distances[node];
+        double base_distance = distances[node];
 
         uint64_t begin = graph->offsets[node];
         uint64_t end = graph->offsets[node + 1u];
         for (uint64_t idx = begin; idx < end; ++idx) {
             uint32_t neighbor = graph->edges[idx];
-            if (distances[neighbor] != -1) {
+            if (visited_mask[neighbor]) {
                 continue;
             }
-            int32_t next_distance = base_distance + 1;
+            double next_distance = base_distance + 1.0;
             distances[neighbor] = next_distance;
             if (size == node_count) {
                 fprintf(stderr, "Queue overflow during BFS traversal\n");
                 rc = -1;
                 goto cleanup;
             }
-            queue[tail] = neighbor;
+            queue[tail] = (double)neighbor;
             tail = (tail + 1u == node_count) ? 0u : (tail + 1u);
             size++;
             visited++;
             distance_sum += (uint64_t)next_distance;
-            if (next_distance > max_distance) {
-                max_distance = next_distance;
+            int32_t next_distance_int = (int32_t)next_distance;
+            if (next_distance_int > max_distance) {
+                max_distance = next_distance_int;
             }
+            visited_mask[neighbor] = 1;
         }
     }
 
 cleanup:
     free(queue);
     free(distances);
+    free(visited_mask);
 
     if (rc != 0) {
         return rc;

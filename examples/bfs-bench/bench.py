@@ -87,6 +87,21 @@ def run_timed(binary: str, graph_path: Path) -> tuple[dict[str, float | int], st
     return metrics, result.stdout.strip()
 
 
+def run_best_of(binary: str, graph_path: Path, runs: int) -> tuple[dict[str, float | int], str]:
+    best_metrics: dict[str, float | int] | None = None
+    best_stdout = ""
+    best_user_time = float("inf")
+    for _ in range(max(1, runs)):
+        metrics, stdout = run_timed(binary, graph_path)
+        user_time = float(metrics["User time (seconds)"])
+        if user_time < best_user_time:
+            best_user_time = user_time
+            best_metrics = metrics
+            best_stdout = stdout
+    assert best_metrics is not None
+    return best_metrics, best_stdout
+
+
 def format_value(name: str, value: float | int) -> str:
     if name == "User time (seconds)":
         return f"{value:.3f}s"
@@ -137,10 +152,11 @@ def main() -> int:
     parser.add_argument(
         "--margo-bin",
         choices=["bfs_margo", "bfs_bench_safe"],
-        default="bfs_bench_safe",
-        help="Margo benchmark binary to run (default: bfs_bench_safe)",
+        default="bfs_margo",
+        help="Margo benchmark binary to run (default: bfs_margo)",
     )
     parser.add_argument("--skip-build", action="store_true", help="Skip invoking make before running the benchmarks")
+    parser.add_argument("--runs", type=int, default=3, help="Number of runs per binary (best run is reported)")
     args = parser.parse_args()
 
     graph_path = (ROOT / args.graph).resolve()
@@ -151,8 +167,8 @@ def main() -> int:
     print(f"Benchmarking with graph: {graph_path}")
 
     margo_binary = f"./{args.margo_bin}"
-    margo_metrics, margo_stdout = run_timed(margo_binary, graph_path)
-    c_metrics, c_stdout = run_timed("./bfs_c", graph_path)
+    c_metrics, c_stdout = run_best_of("./bfs_c", graph_path, args.runs)
+    margo_metrics, margo_stdout = run_best_of(margo_binary, graph_path, args.runs)
 
     if margo_stdout:
         print(f"\n[Margo stdout: {args.margo_bin}]")
