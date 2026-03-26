@@ -124,7 +124,9 @@ make margo-in-margo
 - `Scan(&int_var)` / `ScanLine(buffer)`  
   `@import std/io`가 포함된 번역 단위에서만 사용할 수 있다. `Scan`은 공백 단위 토큰을 읽고 성공적으로 파싱한 인자 수를 반환하며, `ScanLine`은 개행까지 읽는다. 여러 인자를 넘기면 각각의 타입에 맞는 `%d`, `%f`, `%s` 등이 자동으로 연결된다.
 - `alloc(size)` / `alloc_and_init(size, literal)`  
-  우선 libttak 메모리 할당을 시도하고, 실패/불가 조건에서는 abstract memory fallback(내장 힙 폴백)으로 자동 전환한다. RAII 해제 경로는 통합 free 훅을 통해 할당 원천(libttak/fallback)을 판별해 안전하게 해제한다.
+  우선 libttak 메모리 할당을 시도하고, 실패/불가 조건에서는 abstract memory fallback(내장 힙 폴백)으로 자동 전환한다.  
+  컴파일러는 `alloc` 계열 대입 변수를 소유 객체로 추적해 스코프 종료/`return` 직전에 자동 해제를 주입한다.  
+  해제 시에는 통합 free 훅이 할당 원천(libttak/fallback)을 판별해 안전하게 정리한다.
 - `seek_from_file(stream, pattern)`, `pos_from_file(stream, pattern)`, `jmp_from_file(stream, pattern)`, `return_all_bitmask_offsets(stream, pattern)`  
   `@import file/core`를 통해 노출되며, `FILE *` 스트림 안에서 바이트 패턴을 검색하거나 (존재 여부/오프셋) 확인하고, 필요 시 `fseek`으로 점프한다. `return_all_bitmask_offsets`는 전체 파일을 한 번 훑어 패턴이 시작되는 모든 위치를 bool 마스크로 돌려주며, `[0x7F, 'E', 'L', 'F']`처럼 정적 바이트 배열 리터럴을 즉시 인자로 넘길 수 있다. 컴파일러가 자동으로 상수 버퍼를 생성하고 `hits.indices()` 같은 도우미도 제공한다.
 - `margo_file_read`, `margo_file_write`  
