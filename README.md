@@ -69,6 +69,7 @@ C++ 바인딩 지원은 향후 마일스톤이다. 지시자는 주석으로 보
 | `@import std/errno` | `<errno.h>` |
 | `@import std/file` | `<stdio.h>` |
 | `@import file/core` | `<stdio.h>` + 파일 패턴 검색 헬퍼 |
+| `@import network/core` | POSIX socket 헤더 + 네트워크 I/O 헬퍼 |
 
 ### 쓰레드/프로세스 런타임 (Experimental)
 - `@import threads/core` — `threads_cluster_t`, `threads_mailbox_t`, `_pairs` 조합을 위한 헤더 온리 스케줄러를 노출한다. `pthread` 위에서 동작하며 `threads_spawn`, `threads_spawn_isolate`, `threads_mailbox_*` API를 제공한다.
@@ -123,9 +124,13 @@ make margo-in-margo
 - `Scan(&int_var)` / `ScanLine(buffer)`  
   `@import std/io`가 포함된 번역 단위에서만 사용할 수 있다. `Scan`은 공백 단위 토큰을 읽고 성공적으로 파싱한 인자 수를 반환하며, `ScanLine`은 개행까지 읽는다. 여러 인자를 넘기면 각각의 타입에 맞는 `%d`, `%f`, `%s` 등이 자동으로 연결된다.
 - `alloc(size)` / `alloc_and_init(size, literal)`  
-  힙에서 바이트 단위 블록을 확보하고, 필요 시 문자열 리터럴을 복사해 준다. 반환 값은 C의 `void*`와 호환되므로 `string`/`weird` 등을 통해 자유롭게 캐스팅하여 사용하면 된다.
+  우선 libttak 메모리 할당을 시도하고, 실패/불가 조건에서는 abstract memory fallback(내장 힙 폴백)으로 자동 전환한다. RAII 해제 경로는 통합 free 훅을 통해 할당 원천(libttak/fallback)을 판별해 안전하게 해제한다.
 - `seek_from_file(stream, pattern)`, `pos_from_file(stream, pattern)`, `jmp_from_file(stream, pattern)`, `return_all_bitmask_offsets(stream, pattern)`  
   `@import file/core`를 통해 노출되며, `FILE *` 스트림 안에서 바이트 패턴을 검색하거나 (존재 여부/오프셋) 확인하고, 필요 시 `fseek`으로 점프한다. `return_all_bitmask_offsets`는 전체 파일을 한 번 훑어 패턴이 시작되는 모든 위치를 bool 마스크로 돌려주며, `[0x7F, 'E', 'L', 'F']`처럼 정적 바이트 배열 리터럴을 즉시 인자로 넘길 수 있다. 컴파일러가 자동으로 상수 버퍼를 생성하고 `hits.indices()` 같은 도우미도 제공한다.
+- `margo_file_read`, `margo_file_write`  
+  파일 접근은 공통 래퍼를 통해 수행되며, 파일 읽기/쓰기에 대한 일관된 API를 제공한다.
+- `margo_net_tcp_connect`, `margo_net_send`, `margo_net_recv`, `margo_net_close`  
+  `@import network/core`와 함께 네트워크 소켓 I/O를 위한 기본 연결/송수신/종료 경로를 제공한다.
 
 ### 실행형 예제 (숫자 야구)
 

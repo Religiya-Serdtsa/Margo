@@ -178,6 +178,7 @@ C++ binding support is a future milestone.  The directive is preserved as a comm
 | `@import std/errno` | `<errno.h>` |
 | `@import std/file` | `<stdio.h>` |
 | `@import file/core` | `<stdio.h>` + binary pattern helpers |
+| `@import network/core` | POSIX socket headers + network I/O helpers |
 
 ### File Pattern Helpers (`@import file/core`)
 - `seek_from_file(stream, pattern)` scans from the current `FILE *` position to EOF, returning `true` when the byte pattern is present while restoring the original file pointer afterward.
