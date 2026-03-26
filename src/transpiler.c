@@ -267,7 +267,7 @@ static bool raii_live_emit_scope_frees(raii_live_t *live, int depth, FILE *out) 
         if (v->scope_depth != depth) {
             continue;
         }
-        if (fprintf(out, "ttak_mem_free(%s);\n", v->name) < 0) {
+        if (fprintf(out, "margo_builtin_free_ptr(%s);\n", v->name) < 0) {
             ok = false;
         }
         free(v->name);
@@ -302,7 +302,7 @@ static bool raii_live_emit_return_frees(raii_live_t *live,
         if (skip_name && strcmp(v->name, skip_name) == 0) {
             continue;
         }
-        if (fprintf(out, "ttak_mem_free(%s);\n", v->name) < 0) {
+        if (fprintf(out, "margo_builtin_free_ptr(%s);\n", v->name) < 0) {
             ok = false;
         }
     }
@@ -548,6 +548,13 @@ static void emit_prelude(FILE *out) {
         "#include <stdint.h>\n",
         "#include <string.h>\n",
         "#include <stdio.h>\n",
+        "#include <stdlib.h>\n",
+        "#include <errno.h>\n",
+        "#include <sys/types.h>\n",
+        "#include <sys/socket.h>\n",
+        "#include <netinet/in.h>\n",
+        "#include <arpa/inet.h>\n",
+        "#include <unistd.h>\n",
         "#include <ttak/mem/mem.h>\n",
         "#include <ttak/mem/epoch_gc.h>\n",
         "#include <ttak/timing/timing.h>\n",
@@ -820,8 +827,76 @@ static void emit_prelude(FILE *out) {
         "static inline uint64_t margo_now_ticks(void) {\n",
         "    return ttak_get_tick_count();\n",
         "}\n",
+        "typedef struct margo_fallback_alloc_node {\n",
+        "    void *ptr;\n",
+        "    struct margo_fallback_alloc_node *next;\n",
+        "} margo_fallback_alloc_node_t;\n",
+        "static margo_fallback_alloc_node_t *margo_fallback_alloc_head = NULL;\n",
+        "static inline bool margo_fallback_alloc_track(void *ptr) {\n",
+        "    if (!ptr) {\n",
+        "        return false;\n",
+        "    }\n",
+        "    margo_fallback_alloc_node_t *node = (margo_fallback_alloc_node_t *)malloc(sizeof(*node));\n",
+        "    if (!node) {\n",
+        "        errno = ENOMEM;\n",
+        "        return false;\n",
+        "    }\n",
+        "    node->ptr = ptr;\n",
+        "    node->next = margo_fallback_alloc_head;\n",
+        "    margo_fallback_alloc_head = node;\n",
+        "    return true;\n",
+        "}\n",
+        "static inline bool margo_fallback_alloc_untrack(void *ptr) {\n",
+        "    if (!ptr) {\n",
+        "        return false;\n",
+        "    }\n",
+        "    margo_fallback_alloc_node_t *prev = NULL;\n",
+        "    margo_fallback_alloc_node_t *cur = margo_fallback_alloc_head;\n",
+        "    while (cur) {\n",
+        "        if (cur->ptr == ptr) {\n",
+        "            if (prev) {\n",
+        "                prev->next = cur->next;\n",
+        "            } else {\n",
+        "                margo_fallback_alloc_head = cur->next;\n",
+        "            }\n",
+        "            free(cur);\n",
+        "            return true;\n",
+        "        }\n",
+        "        prev = cur;\n",
+        "        cur = cur->next;\n",
+        "    }\n",
+        "    return false;\n",
+        "}\n",
+        "static inline void *margo_fallback_alloc(size_t bytes) {\n",
+        "    void *ptr = malloc(bytes);\n",
+        "    if (!ptr) {\n",
+        "        return NULL;\n",
+        "    }\n",
+        "    if (!margo_fallback_alloc_track(ptr)) {\n",
+        "        free(ptr);\n",
+        "        return NULL;\n",
+        "    }\n",
+        "    return ptr;\n",
+        "}\n",
+        "static inline void margo_builtin_free_ptr(void *ptr) {\n",
+        "    if (!ptr) {\n",
+        "        return;\n",
+        "    }\n",
+        "    if (margo_fallback_alloc_untrack(ptr)) {\n",
+        "        free(ptr);\n",
+        "        return;\n",
+        "    }\n",
+        "    ttak_mem_free(ptr);\n",
+        "}\n",
         "static inline void *margo_builtin_alloc_bytes(size_t bytes) {\n",
-        "    return ttak_mem_alloc(bytes, __TTAK_UNSAFE_MEM_FOREVER__, margo_now_ticks());\n",
+        "    if (bytes == 0) {\n",
+        "        return NULL;\n",
+        "    }\n",
+        "    void *ptr = ttak_mem_alloc(bytes, __TTAK_UNSAFE_MEM_FOREVER__, margo_now_ticks());\n",
+        "    if (!ptr) {\n",
+        "        ptr = margo_fallback_alloc(bytes);\n",
+        "    }\n",
+        "    return ptr;\n",
         "}\n",
         "static inline void *margo_builtin_alloc_and_copy(size_t bytes, const void *src, size_t src_len) {\n",
         "    void *dst = margo_builtin_alloc_bytes(bytes);\n",
@@ -830,6 +905,63 @@ static void emit_prelude(FILE *out) {
         "        memcpy(dst, src, copy);\n",
         "    }\n",
         "    return dst;\n",
+        "}\n",
+        "static inline size_t margo_file_read(void *dst, size_t elem_size, size_t elem_count, FILE *stream) {\n",
+        "    if (!dst || !stream || elem_size == 0 || elem_count == 0) {\n",
+        "        return 0;\n",
+        "    }\n",
+        "    return fread(dst, elem_size, elem_count, stream);\n",
+        "}\n",
+        "static inline size_t margo_file_write(const void *src, size_t elem_size, size_t elem_count, FILE *stream) {\n",
+        "    if (!src || !stream || elem_size == 0 || elem_count == 0) {\n",
+        "        return 0;\n",
+        "    }\n",
+        "    return fwrite(src, elem_size, elem_count, stream);\n",
+        "}\n",
+        "static inline int margo_net_tcp_connect(const char *ipv4, uint16_t port) {\n",
+        "    if (!ipv4 || !*ipv4) {\n",
+        "        errno = EINVAL;\n",
+        "        return -1;\n",
+        "    }\n",
+        "    int sock = socket(AF_INET, SOCK_STREAM, 0);\n",
+        "    if (sock < 0) {\n",
+        "        return -1;\n",
+        "    }\n",
+        "    struct sockaddr_in addr;\n",
+        "    memset(&addr, 0, sizeof(addr));\n",
+        "    addr.sin_family = AF_INET;\n",
+        "    addr.sin_port = htons(port);\n",
+        "    if (inet_pton(AF_INET, ipv4, &addr.sin_addr) != 1) {\n",
+        "        close(sock);\n",
+        "        errno = EINVAL;\n",
+        "        return -1;\n",
+        "    }\n",
+        "    if (connect(sock, (const struct sockaddr *)&addr, sizeof(addr)) != 0) {\n",
+        "        int saved = errno;\n",
+        "        close(sock);\n",
+        "        errno = saved;\n",
+        "        return -1;\n",
+        "    }\n",
+        "    return sock;\n",
+        "}\n",
+        "static inline ssize_t margo_net_send(int sock, const void *buf, size_t len) {\n",
+        "    if (sock < 0 || (!buf && len > 0)) {\n",
+        "        errno = EINVAL;\n",
+        "        return -1;\n",
+        "    }\n",
+        "    return send(sock, buf, len, 0);\n",
+        "}\n",
+        "static inline ssize_t margo_net_recv(int sock, void *buf, size_t len) {\n",
+        "    if (sock < 0 || (!buf && len > 0)) {\n",
+        "        errno = EINVAL;\n",
+        "        return -1;\n",
+        "    }\n",
+        "    return recv(sock, buf, len, 0);\n",
+        "}\n",
+        "static inline void margo_net_close(int sock) {\n",
+        "    if (sock >= 0) {\n",
+        "        close(sock);\n",
+        "    }\n",
         "}\n",
         "#define alloc(size) margo_builtin_alloc_bytes((size_t)(size))\n",
         "#define alloc_and_init(size, literal) margo_builtin_alloc_and_copy((size_t)(size), (literal), sizeof(literal))\n",
@@ -1228,6 +1360,25 @@ static bool emit_include_for_import(FILE *out, const import_directive_t *dir, di
     if (dir->kind == IMPORT_KIND_STD_FILE) {
         if (fputs("#include <stdio.h>\n", out) == EOF) {
             diagnostic_set(diag, 0, "failed to emit std/file include");
+            return false;
+        }
+        return true;
+    }
+    if (dir->kind == IMPORT_KIND_FILE_CORE) {
+        if (fputs("#include <stdio.h>\n", out) == EOF ||
+            fputs("#include <errno.h>\n", out) == EOF) {
+            diagnostic_set(diag, 0, "failed to emit file/core includes");
+            return false;
+        }
+        return true;
+    }
+    if (dir->kind == IMPORT_KIND_NETWORK_CORE) {
+        if (fputs("#include <sys/types.h>\n", out) == EOF ||
+            fputs("#include <sys/socket.h>\n", out) == EOF ||
+            fputs("#include <netinet/in.h>\n", out) == EOF ||
+            fputs("#include <arpa/inet.h>\n", out) == EOF ||
+            fputs("#include <unistd.h>\n", out) == EOF) {
+            diagnostic_set(diag, 0, "failed to emit network/core includes");
             return false;
         }
         return true;
