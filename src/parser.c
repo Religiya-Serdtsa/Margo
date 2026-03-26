@@ -354,6 +354,12 @@ bool parser_parse_import(const char *source,
     } else if (strncmp(sanitized, "std/file", 8) == 0 && sanitized[8] == '\0') {
         kind = IMPORT_KIND_STD_FILE;
         payload = "file";
+    } else if (strncmp(sanitized, "file/core", 9) == 0 && sanitized[9] == '\0') {
+        kind = IMPORT_KIND_FILE_CORE;
+        payload = "file/core";
+    } else if (strncmp(sanitized, "network/core", 12) == 0 && sanitized[12] == '\0') {
+        kind = IMPORT_KIND_NETWORK_CORE;
+        payload = "network/core";
     } else if (strncmp(sanitized, "std/", 4) == 0) {
         kind = IMPORT_KIND_STD;
         payload = sanitized + 4;

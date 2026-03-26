@@ -267,7 +267,7 @@ static bool raii_live_emit_scope_frees(raii_live_t *live, int depth, FILE *out) 
         if (v->scope_depth != depth) {
             continue;
         }
-        if (fprintf(out, "ttak_mem_free(%s);\n", v->name) < 0) {
+        if (fprintf(out, "margo_builtin_free_ptr(%s);\n", v->name) < 0) {
             ok = false;
         }
         free(v->name);
@@ -302,7 +302,7 @@ static bool raii_live_emit_return_frees(raii_live_t *live,
         if (skip_name && strcmp(v->name, skip_name) == 0) {
             continue;
         }
-        if (fprintf(out, "ttak_mem_free(%s);\n", v->name) < 0) {
+        if (fprintf(out, "margo_builtin_free_ptr(%s);\n", v->name) < 0) {
             ok = false;
         }
     }
