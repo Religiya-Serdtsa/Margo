@@ -139,15 +139,8 @@ fn void render_path(auto_matrix field,
                     struct Coord start,
                     struct Coord goal) {
     print("S=start, G=goal, #=wall, *=route");
-    auto current_row = -1;
     for r = 0; <GRID_ROWS; ++ {
         for c = 0; <GRID_COLS; ++ {
-            if r != current_row {
-                if current_row != -1 {
-                    print("", endl = "\n");
-                }
-                current_row = r;
-            }
             char glyph = '.';
             auto tile = matrix_get(field, r, c);
             if tile >= 500 {
@@ -162,10 +155,8 @@ fn void render_path(auto_matrix field,
                 glyph = 'G';
             }
             print(glyph, sep = "", endl = "");
-            if c + 1 == GRID_COLS {
-                print("", endl = "\n");
-            }
         }
+        print("", endl = "\n");
     }
 }
 
