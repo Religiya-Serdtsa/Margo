@@ -6,8 +6,8 @@
 
 struct PipelineCtx {
     threads_cluster_t cluster
-    threads_mailbox_t raw
-    threads_mailbox_t parsed
+    threads_channel_t raw
+    threads_channel_t parsed
     int iterations
     uint64_t checksum
 }
@@ -28,9 +28,9 @@ fn void pipeline_reader(int id, weird(void, 1) payload) {
     weird(struct PipelineCtx, 1) ctx = payload
     auto start = threads_now_ns()
     for value = 0; < ctx->iterations; ++ {
-        threads_mailbox_send(&ctx->raw, &value)
+        threads_channel_send(&ctx->raw, &value)
     }
-    threads_mailbox_close(&ctx->raw)
+    threads_channel_close(&ctx->raw)
     auto elapsed = threads_ns_to_ms(threads_now_ns() - start)
     print("reader", id, "sent", ctx->iterations, "values in", elapsed, "ms")
 }
@@ -38,12 +38,12 @@ fn void pipeline_reader(int id, weird(void, 1) payload) {
 fn void pipeline_parser(int id, weird(void, 1) payload) {
     weird(struct PipelineCtx, 1) ctx = payload
     int value = 0
-    while threads_mailbox_recv(&ctx->raw, &value) {
+    while threads_channel_recv(&ctx->raw, &value) {
         value *= 2
-        threads_mailbox_send(&ctx->parsed, &value)
+        threads_channel_send(&ctx->parsed, &value)
     }
-    threads_mailbox_close(&ctx->parsed)
-    print("parser", id, "drained raw mailbox")
+    threads_channel_close(&ctx->parsed)
+    print("parser", id, "drained raw channel")
 }
 
 fn void pipeline_sink(int id, weird(void, 1) payload) {
@@ -51,7 +51,7 @@ fn void pipeline_sink(int id, weird(void, 1) payload) {
     int value = 0
     auto consumed = 0
     auto start = threads_now_ns()
-    while threads_mailbox_recv(&ctx->parsed, &value) {
+    while threads_channel_recv(&ctx->parsed, &value) {
         ctx->checksum += (uint64_t)value
         consumed++
     }
@@ -62,32 +62,40 @@ fn void pipeline_sink(int id, weird(void, 1) payload) {
 fn void run_thread_pipeline(int iterations) {
     struct PipelineCtx ctx = {0}
     ctx.iterations = iterations
-    if !threads_mailbox_init(&ctx.raw, sizeof(int), 2048) {
-        print("failed to init raw mailbox")
+    if !threads_channel_init(&ctx.raw, sizeof(int), 2048) {
+        print("failed to init raw channel")
         return
     }
-    if !threads_mailbox_init(&ctx.parsed, sizeof(int), 2048) {
-        print("failed to init parsed mailbox")
-        threads_mailbox_destroy(&ctx.raw)
+    if !threads_channel_init(&ctx.parsed, sizeof(int), 2048) {
+        print("failed to init parsed channel")
+        threads_channel_destroy(&ctx.raw)
         return
     }
     threads_cluster_init(&ctx.cluster, "pipeline")
 
-    threads_job_handle_t reader = {0}
-    threads_job_handle_t parser = {0}
-    threads_job_handle_t sink = {0}
+    threads_thread_handle_t handles[3] = {0}
+    if !threads_thread_start(&ctx.cluster, pipeline_reader, &ctx, &ctx.raw, THREADS_THREAD_FLAG_NONE, &handles[0]) {
+        print("failed to start reader")
+        goto cleanup
+    }
+    if !threads_thread_start(&ctx.cluster, pipeline_parser, &ctx, &ctx.raw, THREADS_THREAD_FLAG_NONE, &handles[1]) {
+        print("failed to start parser")
+        goto cleanup
+    }
+    if !threads_thread_start(&ctx.cluster, pipeline_sink, &ctx, &ctx.parsed, THREADS_THREAD_FLAG_LAZY_JOIN, &handles[2]) {
+        print("failed to start sink")
+        goto cleanup
+    }
 
-    threads_spawn(&ctx.cluster, pipeline_reader, &ctx, &reader)
-    threads_spawn(&ctx.cluster, pipeline_parser, &ctx, &parser)
-    threads_spawn_isolate(&ctx.cluster, pipeline_sink, &ctx, &sink)
-
-    threads_job_join(&reader)
-    threads_job_join(&parser)
-    threads_job_join(&sink)
+    threads_cluster_join_all(handles, 3, &ctx.raw)
+    threads_cluster_sync(handles, 3)
 
     print("[threads] checksum", ctx.checksum)
-    threads_mailbox_destroy(&ctx.raw)
-    threads_mailbox_destroy(&ctx.parsed)
+
+cleanup:
+    threads_cluster_sync(handles, 3)
+    threads_channel_destroy(&ctx.raw)
+    threads_channel_destroy(&ctx.parsed)
     threads_cluster_destroy(&ctx.cluster)
 }
 

@@ -46,3 +46,10 @@
 
 ## Integrated Tools
 - [ ] Prototype the fzf-powered autocorrect suggestion flow and tie it to the identifier resolution pass.
+
+## LibTTAK Integration Gaps
+- [v] Replace the current `ttak_mem_alloc(...__TTAK_UNSAFE_MEM_FOREVER__)` fallback path with real detachable arenas + generation resets so `alloc`/`alloc_and_init` scopes exercise libttak's generational ownership flow (see `ttak_mem_alloc_safe`, arena capability flags).
+- [v] Bring up a per-process `ttak_epoch_manager_t`, register worker threads, and route delayed frees via `ttak_epoch_retire` so cross-thread objects honor libttak's three-session epoch reclamation contract.
+- [ ] Surface `ttak_owner_t` / context-bridge policies inside runtime helpers (IO, network) so user callbacks execute under owner-enforced guardrails instead of bypassing libttak's safe execution layer.
+- [ ] Integrate segmented shard tables + the built-in thread pool (`ttak_thread_pool_t`, `ttak_shard_table_t`) to back future async runtime services, rather than relying on ad-hoc pthread or single-thread fallbacks.
+- [ ] Expose libttak observability/acceleration toggles (`ttak_mem_set_trace`, `ttak_execute_batch`, security engine drivers) through CLI flags so transpiled programs can opt into tracing, accelerator selection, and integrity enforcement.

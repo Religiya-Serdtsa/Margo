@@ -68,7 +68,7 @@
 - `@style c { ... }` toggles strict C-like parsing for easy code importing.
 - Decorators such as `@use_switch_optim` hint optimizer passes (emitted as C comments).
 - `@set autocorrect on` delegates unknown identifier resolution to an fzf-backed suggestion engine.
-- `@import threads/core` injects the header-only threading runtime (cluster helpers + shared mailboxes).
+- `@import threads/core` injects the header-only threading runtime that powers `threads <name> { locked_var { ... } threadN ... }`, exposing only `threadN.init/join`, `threads.<name>.join_all(chan)`, `threads.<name>.sync()`, and the four decorators (`@chantype`, `@nochan`, `@independent`, `@lazyjoin`).
 - `@import process` / `@import process/core` inject the POSIX process/channel helpers that emulate Go-style `chan`.
 
 ## 6. Semantic Analysis Pass

@@ -188,9 +188,9 @@ C++ binding support is a future milestone.  The directive is preserved as a comm
 - Patterns accept either buffers plus lengths or inline literals such as `[0x7F, 'E', 'L', 'F']`; the compiler hoists those literals into deduplicated `static const uint8_t` arrays automatically.
 
 ### Thread/Process Runtime (Experimental)
-- `@import threads/core` — exposes a header-only worker scheduler built on top of `pthread`. Provides `threads_cluster_t`, `threads_mailbox_t`, and helpers such as `threads_spawn`, `threads_spawn_isolate`, and `threads_mailbox_send/recv`.
-- `@import process` / `@import process/core` — wraps POSIX `fork`, shared memory, and futex-friendly channels via `process_channel_t`/`process_cluster_t`. Mimics Go-style `chan <- val` semantics in plain C.
-- The new `examples/thread_process_bench` folder wires both modules together to provide a combined throughput benchmark.
+- `@import threads/core` — drives the `threads <name> { locked_var { ... } threadN ... }` syntax. Every thread exposes `threadN.init(...)`/`threadN.join()`, clusters expose `threads.<name>.join_all(chan)` and `threads.<name>.sync()`, and decorators stay limited to `@chantype`, `@nochan`, `@independent`, and `@lazyjoin`.
+- `@import process` / `@import process/core` — powers the `process <name>` block and `chan T` IPC combination. Processes only expose `spawn`, `wait_all`, and `supervise`, while channel send/recv sticks to Go-like syntax.
+- `examples/thread_process_bench` demonstrates how both runtimes can be evaluated together.
 - `examples/matrix_astar` demonstrates how `matrix/core` helpers, `mat_for`, and `mat_neighbor` can encode an A* search as a clean matrix-driven state machine.
 
 ### Semantic Analysis Pass (`src/sema.c`)

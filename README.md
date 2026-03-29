@@ -72,8 +72,8 @@ C++ 바인딩 지원은 향후 마일스톤이다. 지시자는 주석으로 보
 | `@import network/core` | POSIX socket 헤더 + 네트워크 I/O 헬퍼 |
 
 ### 쓰레드/프로세스 런타임 (Experimental)
-- `@import threads/core` — `threads_cluster_t`, `threads_mailbox_t`, `_pairs` 조합을 위한 헤더 온리 스케줄러를 노출한다. `pthread` 위에서 동작하며 `threads_spawn`, `threads_spawn_isolate`, `threads_mailbox_*` API를 제공한다.
-- `@import process` / `@import process/core` — `process_channel_t`, `process_cluster_t`를 포함한 멀티프로세스 통신 도구. POSIX `fork` + 공유 메모리 + 채널을 묶어 Go 스타일 `send/recv`를 흉내 낸다.
+- `@import threads/core` — `threads <name> { locked_var { ... } threadN ... }` 문법을 지원하는 헤더 온리 런타임이다. `threadN.init(...)`, `threadN.join()`, `threads.<cluster>.join_all(chan)`, `threads.<cluster>.sync()`가 일관된 API로 노출되며, 추가 데코레이터 없이 `@chantype`, `@nochan`, `@independent`, `@lazyjoin`만 허용한다.
+- `@import process` / `@import process/core` — `process <name>` 블록과 `chan T` 기반 IPC를 묶은 런타임. 프로세스는 `spawn`/`wait_all`/`supervise` 조합만 제공하며, 채널 송수신은 Go 스타일 `chan <- value`, `value <- chan` 구문으로 단순화된다.
 - 두 런타임을 묶어 보여주는 최초의 벤치는 `examples/thread_process_bench`에 포함된다.
 - `examples/matrix_astar`는 `matrix/core`의 기초 연산과 `mat_for`/`mat_neighbor` 구문을 활용해 A* 경로 탐색을 행렬 기반 상태 기계로 표현한다.
 
