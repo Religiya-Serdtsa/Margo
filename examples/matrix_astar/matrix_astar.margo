@@ -13,7 +13,7 @@ int terrain[GRID_ROWS][GRID_COLS] = {
     {0, 1, 0, 1, 0, 1, 0, 0, 0},
     {0, 1, 0, 1, 0, 1, 1, 1, 0},
     {0, 0, 0, 0, 0, 0, 0, 0, 0},
-}
+};
 
 struct Coord {
     int row
@@ -207,7 +207,7 @@ fn int run_pathfinder() {
             .came_col = came_col,
             .current = current,
             .goal = goal,
-        }
+        };
         neighbor_view_for_each(&neighbors, relax_neighbor, &relax_ctx)
     }
 
