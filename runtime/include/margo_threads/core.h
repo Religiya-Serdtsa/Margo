@@ -1,5 +1,10 @@
 #pragma once
 
+/**
+ * @file core.h
+ * @brief Thread runtime helpers backing `@import threads/core`.
+ */
+
 #include <errno.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -13,11 +18,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/**
- * @file core.h
- * @brief Thread runtime helpers backing `@import threads/core`.
- */
 
 /** @defgroup threads_runtime Threads Runtime */
 /** @{ */

@@ -1,5 +1,10 @@
 #pragma once
 
+/**
+ * @file core.h
+ * @brief Matrix runtime primitives for `@import matrix/core`.
+ */
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -7,11 +12,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/**
- * @file core.h
- * @brief Matrix runtime primitives for `@import matrix/core`.
- */
 
 /** @defgroup matrix_runtime Matrix Runtime */
 /** @{ */

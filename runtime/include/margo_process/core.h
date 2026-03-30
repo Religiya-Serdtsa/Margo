@@ -1,5 +1,10 @@
 #pragma once
 
+/**
+ * @file core.h
+ * @brief Process runtime helpers backing `@import process` and process channels.
+ */
+
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -18,11 +23,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/**
- * @file core.h
- * @brief Process runtime helpers backing `@import process` and process channels.
- */
 
 /** @defgroup process_runtime Process Runtime */
 /** @{ */
