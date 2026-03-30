@@ -15,6 +15,14 @@ extern "C" {
 #endif
 
 /**
+ * @file core.h
+ * @brief Thread runtime helpers backing `@import threads/core`.
+ */
+
+/** @defgroup threads_runtime Threads Runtime */
+/** @{ */
+
+/**
  * Simple worker signature used by the thread cluster runtime. Each thread
  * receives an integer identifier plus the opaque payload supplied at init.
  */
@@ -77,6 +85,7 @@ typedef struct {
     pthread_mutex_t mutex;
 } threads_locked_var_t;
 
+/** @brief Initialize `locked_var` state. */
 static inline void threads_locked_init(threads_locked_var_t *locked) {
     if (!locked) {
         return;
@@ -84,6 +93,7 @@ static inline void threads_locked_init(threads_locked_var_t *locked) {
     pthread_mutex_init(&locked->mutex, NULL);
 }
 
+/** @brief Destroy `locked_var` state. */
 static inline void threads_locked_destroy(threads_locked_var_t *locked) {
     if (!locked) {
         return;
@@ -91,6 +101,7 @@ static inline void threads_locked_destroy(threads_locked_var_t *locked) {
     pthread_mutex_destroy(&locked->mutex);
 }
 
+/** @brief Acquire `locked_var` mutex. */
 static inline void threads_locked_acquire(threads_locked_var_t *locked) {
     if (!locked) {
         return;
@@ -98,6 +109,7 @@ static inline void threads_locked_acquire(threads_locked_var_t *locked) {
     pthread_mutex_lock(&locked->mutex);
 }
 
+/** @brief Release `locked_var` mutex. */
 static inline void threads_locked_release(threads_locked_var_t *locked) {
     if (!locked) {
         return;
@@ -105,16 +117,19 @@ static inline void threads_locked_release(threads_locked_var_t *locked) {
     pthread_mutex_unlock(&locked->mutex);
 }
 
+/** @brief Return monotonic timestamp in nanoseconds. */
 static inline uint64_t threads_now_ns(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
 }
 
+/** @brief Convert nanoseconds to milliseconds. */
 static inline double threads_ns_to_ms(uint64_t ns) {
     return (double)ns / 1000000.0;
 }
 
+/** @brief Initialize a thread cluster. */
 static inline void threads_cluster_init(threads_cluster_t *cluster, const char *name) {
     if (!cluster) {
         return;
@@ -131,6 +146,7 @@ static inline void threads_cluster_init(threads_cluster_t *cluster, const char *
     cluster->next_id = 0;
 }
 
+/** @brief Destroy a thread cluster. */
 static inline void threads_cluster_destroy(threads_cluster_t *cluster) {
     if (!cluster) {
         return;
@@ -138,6 +154,7 @@ static inline void threads_cluster_destroy(threads_cluster_t *cluster) {
     pthread_mutex_destroy(&cluster->id_lock);
 }
 
+/** @brief Snapshot cluster status counters. */
 static inline threads_cluster_status_t threads_cluster_status(const threads_cluster_t *cluster) {
     threads_cluster_status_t status = {0};
     if (!cluster) {
@@ -151,6 +168,7 @@ static inline threads_cluster_status_t threads_cluster_status(const threads_clus
     return status;
 }
 
+/** @brief Initialize a blocking channel for thread communication. */
 static inline bool threads_channel_init(threads_channel_t *chan, size_t elem_size, size_t capacity) {
     if (!chan || elem_size == 0 || capacity == 0) {
         errno = EINVAL;
@@ -170,6 +188,7 @@ static inline bool threads_channel_init(threads_channel_t *chan, size_t elem_siz
     return true;
 }
 
+/** @brief Destroy a thread channel and release resources. */
 static inline void threads_channel_destroy(threads_channel_t *chan) {
     if (!chan) {
         return;
@@ -184,6 +203,7 @@ static inline void threads_channel_destroy(threads_channel_t *chan) {
     chan->closed = true;
 }
 
+/** @brief Push one value to channel (blocking or non-blocking). */
 static inline bool threads_channel_push_ex(threads_channel_t *chan,
                                            const void *item,
                                            bool blocking) {
@@ -211,6 +231,7 @@ static inline bool threads_channel_push_ex(threads_channel_t *chan,
     return true;
 }
 
+/** @brief Pop one value from channel (blocking or non-blocking). */
 static inline bool threads_channel_pop_ex(threads_channel_t *chan, void *out, bool blocking) {
     if (!chan || !out) {
         errno = EINVAL;
@@ -236,22 +257,27 @@ static inline bool threads_channel_pop_ex(threads_channel_t *chan, void *out, bo
     return true;
 }
 
+/** @brief Blocking send helper. */
 static inline bool threads_channel_send(threads_channel_t *chan, const void *item) {
     return threads_channel_push_ex(chan, item, true);
 }
 
+/** @brief Non-blocking send helper. */
 static inline bool threads_channel_try_send(threads_channel_t *chan, const void *item) {
     return threads_channel_push_ex(chan, item, false);
 }
 
+/** @brief Blocking receive helper. */
 static inline bool threads_channel_recv(threads_channel_t *chan, void *out) {
     return threads_channel_pop_ex(chan, out, true);
 }
 
+/** @brief Non-blocking receive helper. */
 static inline bool threads_channel_try_recv(threads_channel_t *chan, void *out) {
     return threads_channel_pop_ex(chan, out, false);
 }
 
+/** @brief Close channel and wake all waiters. */
 static inline void threads_channel_close(threads_channel_t *chan) {
     if (!chan) {
         return;
@@ -263,6 +289,7 @@ static inline void threads_channel_close(threads_channel_t *chan) {
     pthread_mutex_unlock(&chan->lock);
 }
 
+/** @brief Return queued element count. */
 static inline size_t threads_channel_size(threads_channel_t *chan) {
     if (!chan) {
         return 0;
@@ -281,6 +308,7 @@ typedef struct {
     threads_thread_handle_t *handle;
 } threads_thread_ctx_t;
 
+/** @brief Allocate next cluster-local thread id. */
 static inline int threads_cluster_next_id(threads_cluster_t *cluster) {
     pthread_mutex_lock(&cluster->id_lock);
     int id = cluster->next_id++;
@@ -288,6 +316,7 @@ static inline int threads_cluster_next_id(threads_cluster_t *cluster) {
     return id;
 }
 
+/** @brief Internal trampoline used by `pthread_create`. */
 static inline void *threads_thread_trampoline(void *arg) {
     threads_thread_ctx_t *ctx = (threads_thread_ctx_t *)arg;
     atomic_fetch_add(&ctx->cluster->active_threads, 1);
@@ -299,6 +328,7 @@ static inline void *threads_thread_trampoline(void *arg) {
     return NULL;
 }
 
+/** @brief Start a runtime thread with flags and optional channel binding. */
 static inline bool threads_thread_start(threads_cluster_t *cluster,
                                         threads_thread_fn fn,
                                         void *payload,
@@ -341,6 +371,7 @@ static inline bool threads_thread_start(threads_cluster_t *cluster,
     return true;
 }
 
+/** @brief Restart a previously joined thread handle. */
 static inline bool threads_thread_restart(threads_thread_handle_t *handle) {
     if (!handle || !handle->cluster || !handle->fn) {
         errno = EINVAL;
@@ -358,6 +389,7 @@ static inline bool threads_thread_restart(threads_thread_handle_t *handle) {
                                 handle);
 }
 
+/** @brief Join one runtime thread. */
 static inline bool threads_thread_join(threads_thread_handle_t *handle) {
     if (!handle) {
         errno = EINVAL;
@@ -375,6 +407,7 @@ static inline bool threads_thread_join(threads_thread_handle_t *handle) {
     return false;
 }
 
+/** @brief Join with millisecond timeout (`<0` means blocking join). */
 static inline bool threads_thread_wait_ms(threads_thread_handle_t *handle, int timeout_ms) {
     if (!handle) {
         errno = EINVAL;
@@ -395,6 +428,7 @@ static inline bool threads_thread_wait_ms(threads_thread_handle_t *handle, int t
     return atomic_load(&handle->finished);
 }
 
+/** @brief Detach a thread handle from join lifecycle. */
 static inline void threads_thread_detach(threads_thread_handle_t *handle) {
     if (!handle || handle->joined || handle->thread == (pthread_t)0) {
         return;
@@ -404,6 +438,7 @@ static inline void threads_thread_detach(threads_thread_handle_t *handle) {
     handle->thread = (pthread_t)0;
 }
 
+/** @brief Join all eligible handles in a cluster handle array. */
 static inline bool threads_cluster_join_all(threads_thread_handle_t *handles,
                                             size_t count,
                                             void *chan_binding) {
@@ -433,6 +468,7 @@ static inline bool threads_cluster_join_all(threads_thread_handle_t *handles,
     return ok;
 }
 
+/** @brief Join handles marked with lazy-join flag. */
 static inline bool threads_cluster_sync(threads_thread_handle_t *handles, size_t count) {
     if (!handles) {
         errno = EINVAL;
@@ -453,6 +489,8 @@ static inline bool threads_cluster_sync(threads_thread_handle_t *handles, size_t
     }
     return ok;
 }
+
+/** @} */
 
 #ifdef __cplusplus
 }
