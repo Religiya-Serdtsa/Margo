@@ -1,5 +1,10 @@
 #pragma once
 
+/**
+ * @file core.h
+ * @brief Matrix runtime primitives for `@import matrix/core`.
+ */
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -8,14 +13,26 @@
 extern "C" {
 #endif
 
+/** @defgroup matrix_runtime Matrix Runtime */
+/** @{ */
+
+/**
+ * @brief Heap-allocated matrix payload with trailing contiguous storage.
+ */
 typedef struct margo_matrix {
     size_t rows;
     size_t cols;
     double data[];
 } margo_matrix;
 
+/**
+ * @brief Convenience alias used by Margo matrix DSL lowering.
+ */
 typedef margo_matrix *auto_matrix;
 
+/**
+ * @brief Cell descriptor used by neighbor and mapping callbacks.
+ */
 typedef struct {
     size_t rank;
     size_t index[4];
@@ -23,10 +40,16 @@ typedef struct {
     double value;
 } mat_neighbor_cell;
 
+/** @brief Visitor callback for matrix element iteration. */
 typedef bool (*matrix_iter_fn)(size_t row, size_t col, double value, void *ctx);
+/** @brief Filter callback for neighborhood selection. */
 typedef bool (*neighbor_filter_fn)(mat_neighbor_cell cell, void *ctx);
+/** @brief Visitor callback for neighborhood traversal. */
 typedef bool (*neighbor_visit_fn)(mat_neighbor_cell cell, void *ctx);
 
+/**
+ * @brief Lazy neighborhood view descriptor.
+ */
 typedef struct {
     auto_matrix matrix;
     size_t row;
@@ -36,14 +59,17 @@ typedef struct {
     void *filter_ctx;
 } neighbor_view;
 
+/** @brief Return matrix row count. */
 static inline size_t matrix_rows(auto_matrix matrix) {
     return matrix ? matrix->rows : 0;
 }
 
+/** @brief Return matrix column count. */
 static inline size_t matrix_cols(auto_matrix matrix) {
     return matrix ? matrix->cols : 0;
 }
 
+/** @brief Translate (row,col) to linear index. */
 static inline size_t matrix_linear_index(auto_matrix matrix, size_t row, size_t col) {
     if (!matrix || row >= matrix->rows || col >= matrix->cols) {
         return 0;
@@ -51,6 +77,7 @@ static inline size_t matrix_linear_index(auto_matrix matrix, size_t row, size_t 
     return row * matrix->cols + col;
 }
 
+/** @brief Read matrix element with bounds guard. */
 static inline double matrix_get(auto_matrix matrix, size_t row, size_t col) {
     if (!matrix || row >= matrix->rows || col >= matrix->cols) {
         return 0.0;
@@ -58,6 +85,7 @@ static inline double matrix_get(auto_matrix matrix, size_t row, size_t col) {
     return matrix->data[matrix_linear_index(matrix, row, col)];
 }
 
+/** @brief Write matrix element with bounds guard. */
 static inline void matrix_set(auto_matrix matrix, size_t row, size_t col, double value) {
     if (!matrix || row >= matrix->rows || col >= matrix->cols) {
         return;
@@ -65,14 +93,17 @@ static inline void matrix_set(auto_matrix matrix, size_t row, size_t col, double
     matrix->data[matrix_linear_index(matrix, row, col)] = value;
 }
 
+/** @brief Return mutable raw data pointer. */
 static inline double *matrix_data(auto_matrix matrix) {
     return matrix ? matrix->data : NULL;
 }
 
+/** @brief Return const raw data pointer. */
 static inline const double *matrix_data_const(auto_matrix matrix) {
     return matrix ? matrix->data : NULL;
 }
 
+/** @brief Return mutable pointer to row base. */
 static inline double *matrix_row_ptr(auto_matrix matrix, size_t row) {
     if (!matrix || row >= matrix->rows) {
         return NULL;
@@ -80,6 +111,7 @@ static inline double *matrix_row_ptr(auto_matrix matrix, size_t row) {
     return &matrix->data[row * matrix->cols];
 }
 
+/** @brief Return const pointer to row base. */
 static inline const double *matrix_row_ptr_const(auto_matrix matrix, size_t row) {
     if (!matrix || row >= matrix->rows) {
         return NULL;
@@ -87,6 +119,7 @@ static inline const double *matrix_row_ptr_const(auto_matrix matrix, size_t row)
     return &matrix->data[row * matrix->cols];
 }
 
+/** @brief Allocate matrix object and backing payload. */
 static inline auto_matrix matrix_alloc(size_t rows, size_t cols) {
     if (!rows || !cols) {
         return NULL;
@@ -101,6 +134,7 @@ static inline auto_matrix matrix_alloc(size_t rows, size_t cols) {
     return matrix;
 }
 
+/** @brief Allocate and fill matrix with one scalar value. */
 static inline auto_matrix matrix_fill(size_t rows, size_t cols, double value) {
     auto_matrix matrix = matrix_alloc(rows, cols);
     if (!matrix) {
@@ -113,6 +147,7 @@ static inline auto_matrix matrix_fill(size_t rows, size_t cols, double value) {
     return matrix;
 }
 
+/** @brief Deep-clone matrix data. */
 static inline auto_matrix matrix_clone(auto_matrix source) {
     if (!source) {
         return NULL;
@@ -128,6 +163,7 @@ static inline auto_matrix matrix_clone(auto_matrix source) {
     return copy;
 }
 
+/** @brief Build identity matrix using custom diagonal value. */
 static inline auto_matrix matrix_identity_with_value(size_t size, double diag_value) {
     auto_matrix matrix = matrix_fill(size, size, 0.0);
     if (!matrix) {
@@ -139,6 +175,7 @@ static inline auto_matrix matrix_identity_with_value(size_t size, double diag_va
     return matrix;
 }
 
+/** @brief Build identity matrix with `diag_value = 1.0`. */
 static inline auto_matrix matrix_identity_default(size_t size) {
     return matrix_identity_with_value(size, 1.0);
 }
@@ -147,6 +184,7 @@ static inline auto_matrix matrix_identity_default(size_t size) {
 #define matrix_identity(...) \
     MARGO_MATRIX_IDENTITY_SELECT(__VA_ARGS__, matrix_identity_with_value, matrix_identity_default)(__VA_ARGS__)
 
+/** @brief Return transposed copy of matrix. */
 static inline auto_matrix matrix_transpose(auto_matrix matrix) {
     if (!matrix) {
         return NULL;
@@ -163,6 +201,7 @@ static inline auto_matrix matrix_transpose(auto_matrix matrix) {
     return out;
 }
 
+/** @brief Matrix multiplication (`lhs * rhs`). */
 static inline auto_matrix matrix_mul(auto_matrix lhs, auto_matrix rhs) {
     if (!lhs || !rhs || matrix_cols(lhs) != matrix_rows(rhs)) {
         return NULL;
@@ -183,6 +222,7 @@ static inline auto_matrix matrix_mul(auto_matrix lhs, auto_matrix rhs) {
     return out;
 }
 
+/** @brief Iterate matrix cells in row-major order. */
 static inline void matrix_for_each(auto_matrix matrix, matrix_iter_fn fn, void *ctx) {
     if (!matrix || !fn) {
         return;
@@ -196,6 +236,7 @@ static inline void matrix_for_each(auto_matrix matrix, matrix_iter_fn fn, void *
     }
 }
 
+/** @brief Build neighborhood view with optional filter callback. */
 static inline neighbor_view matrix_neighbor_with_filter(auto_matrix matrix,
                                                         size_t row,
                                                         size_t col,
@@ -213,6 +254,7 @@ static inline neighbor_view matrix_neighbor_with_filter(auto_matrix matrix,
     return view;
 }
 
+/** @brief Build neighborhood view without filter callback. */
 static inline neighbor_view matrix_neighbor(auto_matrix matrix,
                                             size_t row,
                                             size_t col,
@@ -220,6 +262,7 @@ static inline neighbor_view matrix_neighbor(auto_matrix matrix,
     return matrix_neighbor_with_filter(matrix, row, col, radius, NULL, NULL);
 }
 
+/** @brief Count cells visible through a neighborhood view. */
 static inline size_t neighbor_view_count(const neighbor_view *view) {
     if (!view || !view->matrix) {
         return 0;
@@ -256,6 +299,7 @@ static inline size_t neighbor_view_count(const neighbor_view *view) {
     return count;
 }
 
+/** @brief Visit all cells visible through a neighborhood view. */
 static inline bool neighbor_view_for_each(const neighbor_view *view,
                                           neighbor_visit_fn visit,
                                           void *ctx) {
@@ -301,6 +345,7 @@ static inline bool neighbor_view_for_each(const neighbor_view *view,
     return true;
 }
 
+/** @brief Scalar conversion callback for generic array mapping. */
 typedef double (*margo_matrix_reader_fn)(const void *base, size_t index);
 
 #define MARGO_MATRIX_DEFINE_READER(type, name)                     \
@@ -341,6 +386,7 @@ MARGO_MATRIX_DEFINE_READER(double, margo_matrix_read_double)
              double: margo_matrix_read_double,                                    \
              default: margo_matrix_read_double)
 
+/** @brief Map a raw rectangular array into a new matrix using callback output. */
 static inline auto_matrix margo_matrix_map_from_array_impl(const void *base,
                                                            size_t rows,
                                                            size_t cols,
@@ -374,6 +420,8 @@ static inline auto_matrix margo_matrix_map_from_array_impl(const void *base,
                                      sizeof((array_expr)[0]) / sizeof((array_expr)[0][0]),  \
                                      MARGO_MATRIX_PICK_READER(array_expr),                 \
                                      (mapper_fn))
+
+/** @} */
 
 #ifdef __cplusplus
 }

@@ -1,5 +1,10 @@
 #pragma once
 
+/**
+ * @file core.h
+ * @brief Process runtime helpers backing `@import process` and process channels.
+ */
+
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -19,6 +24,12 @@
 extern "C" {
 #endif
 
+/** @defgroup process_runtime Process Runtime */
+/** @{ */
+
+/**
+ * @brief Shared ring-buffer metadata placed in `mmap` memory for IPC.
+ */
 typedef struct process_channel_shared {
     pthread_mutex_t mutex;
     pthread_cond_t not_empty;
@@ -32,11 +43,17 @@ typedef struct process_channel_shared {
     uint8_t buffer[];
 } process_channel_shared_t;
 
+/**
+ * @brief Handle to a shared process channel allocation.
+ */
 typedef struct {
     process_channel_shared_t *shared;
     size_t alloc_size;
 } process_channel_t;
 
+/**
+ * @brief Initialize a process channel.
+ */
 static inline bool process_channel_init(process_channel_t *chan,
                                         size_t capacity,
                                         size_t elem_size) {
@@ -71,6 +88,9 @@ static inline bool process_channel_init(process_channel_t *chan,
     return true;
 }
 
+/**
+ * @brief Destroy a process channel and release shared mappings.
+ */
 static inline void process_channel_destroy(process_channel_t *chan) {
     if (!chan || !chan->shared) {
         return;
@@ -84,6 +104,9 @@ static inline void process_channel_destroy(process_channel_t *chan) {
     chan->alloc_size = 0;
 }
 
+/**
+ * @brief Send one element into a process channel.
+ */
 static inline bool process_channel_send_ex(process_channel_t *chan,
                                            const void *value,
                                            bool blocking) {
@@ -111,6 +134,9 @@ static inline bool process_channel_send_ex(process_channel_t *chan,
     return true;
 }
 
+/**
+ * @brief Receive one element from a process channel.
+ */
 static inline bool process_channel_recv_ex(process_channel_t *chan, void *out, bool blocking) {
     if (!chan || !chan->shared || !out) {
         return false;
@@ -136,22 +162,37 @@ static inline bool process_channel_recv_ex(process_channel_t *chan, void *out, b
     return true;
 }
 
+/**
+ * @brief Blocking send wrapper.
+ */
 static inline bool process_channel_send(process_channel_t *chan, const void *value) {
     return process_channel_send_ex(chan, value, true);
 }
 
+/**
+ * @brief Non-blocking send wrapper.
+ */
 static inline bool process_channel_try_send(process_channel_t *chan, const void *value) {
     return process_channel_send_ex(chan, value, false);
 }
 
+/**
+ * @brief Blocking receive wrapper.
+ */
 static inline bool process_channel_recv(process_channel_t *chan, void *out) {
     return process_channel_recv_ex(chan, out, true);
 }
 
+/**
+ * @brief Non-blocking receive wrapper.
+ */
 static inline bool process_channel_try_recv(process_channel_t *chan, void *out) {
     return process_channel_recv_ex(chan, out, false);
 }
 
+/**
+ * @brief Close a channel and wake waiters.
+ */
 static inline void process_channel_close(process_channel_t *chan) {
     if (!chan || !chan->shared) {
         return;
@@ -164,6 +205,9 @@ static inline void process_channel_close(process_channel_t *chan) {
     pthread_mutex_unlock(&shared->mutex);
 }
 
+/**
+ * @brief Return current buffered element count.
+ */
 static inline size_t process_channel_size(process_channel_t *chan) {
     if (!chan || !chan->shared) {
         return 0;
@@ -175,11 +219,17 @@ static inline size_t process_channel_size(process_channel_t *chan) {
     return size;
 }
 
+/**
+ * @brief Shared memory region descriptor.
+ */
 typedef struct {
     void *addr;
     size_t size;
 } process_shared_region_t;
 
+/**
+ * @brief Allocate anonymous shared memory region.
+ */
 static inline bool process_shared_region_alloc(process_shared_region_t *region, size_t size) {
     if (!region || size == 0) {
         return false;
@@ -194,6 +244,9 @@ static inline bool process_shared_region_alloc(process_shared_region_t *region, 
     return true;
 }
 
+/**
+ * @brief Release a shared memory region.
+ */
 static inline void process_shared_region_free(process_shared_region_t *region) {
     if (!region || !region->addr) {
         return;
@@ -203,6 +256,9 @@ static inline void process_shared_region_free(process_shared_region_t *region) {
     region->size = 0;
 }
 
+/**
+ * @brief Map a file into shared memory.
+ */
 static inline bool process_map_file(process_shared_region_t *region,
                                     const char *path,
                                     size_t size,
@@ -231,8 +287,14 @@ static inline bool process_map_file(process_shared_region_t *region,
     return true;
 }
 
+/**
+ * @brief Child process entry callback type.
+ */
 typedef void (*process_entry_fn)(process_channel_t *chan, void *user_state);
 
+/**
+ * @brief Handle of one spawned process.
+ */
 typedef struct {
     pid_t pid;
     process_channel_t *chan;
@@ -249,6 +311,9 @@ typedef struct {
     process_handle_t handles[PROCESS_CLUSTER_MAX];
 } process_cluster_t;
 
+/**
+ * @brief Initialize process cluster metadata.
+ */
 static inline void process_cluster_init(process_cluster_t *cluster, const char *name) {
     if (!cluster) {
         return;
@@ -261,6 +326,9 @@ static inline void process_cluster_init(process_cluster_t *cluster, const char *
     }
 }
 
+/**
+ * @brief Spawn a child process attached to a cluster.
+ */
 static inline bool process_cluster_spawn(process_cluster_t *cluster,
                                          process_entry_fn entry,
                                          process_channel_t *chan,
@@ -283,6 +351,9 @@ static inline bool process_cluster_spawn(process_cluster_t *cluster,
     return true;
 }
 
+/**
+ * @brief Wait for all child processes in the cluster.
+ */
 static inline bool process_cluster_wait_all(process_cluster_t *cluster) {
     if (!cluster) {
         return false;
@@ -302,8 +373,14 @@ static inline bool process_cluster_wait_all(process_cluster_t *cluster) {
     return ok;
 }
 
+/**
+ * @brief Supervisor callback for child exit status.
+ */
 typedef void (*process_supervisor_fn)(pid_t pid, int status, void *user_data);
 
+/**
+ * @brief Wait children and invoke supervisor callback for each.
+ */
 static inline void process_cluster_supervise(process_cluster_t *cluster,
                                              process_supervisor_fn fn,
                                              void *user_data) {
@@ -317,6 +394,8 @@ static inline void process_cluster_supervise(process_cluster_t *cluster,
     }
     cluster->count = 0;
 }
+
+/** @} */
 
 #ifdef __cplusplus
 }
