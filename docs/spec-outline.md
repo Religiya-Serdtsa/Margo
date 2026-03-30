@@ -70,6 +70,7 @@
 - `@set autocorrect on` delegates unknown identifier resolution to an fzf-backed suggestion engine.
 - `@import threads/core` injects the header-only threading runtime that powers `threads <name> { locked_var { ... } threadN ... }`, exposing only `threadN.init/join`, `threads.<name>.join_all(chan)`, `threads.<name>.sync()`, and the four decorators (`@chantype`, `@nochan`, `@independent`, `@lazyjoin`).
 - `@import process` / `@import process/core` inject the POSIX process/channel helpers that emulate Go-style `chan`.
+- `@import ds/core` and `@import ds/{vector,stack,queue,deque,heap,hashmap,set}` expose built-in header-only data structures under `runtime/include/margo_ds`.
 
 ## 6. Semantic Analysis Pass
 - Runs over the token stream before code generation, performing:

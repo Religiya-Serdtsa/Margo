@@ -1501,6 +1501,62 @@ static bool emit_include_for_import(FILE *out, const import_directive_t *dir, di
         }
         return true;
     }
+    if (dir->kind == IMPORT_KIND_DS_CORE) {
+        if (fputs("#include <margo_ds/core.h>\n", out) == EOF) {
+            diagnostic_set(diag, 0, "failed to emit ds/core include");
+            return false;
+        }
+        return true;
+    }
+    if (dir->kind == IMPORT_KIND_DS_VECTOR) {
+        if (fputs("#include <margo_ds/vector.h>\n", out) == EOF) {
+            diagnostic_set(diag, 0, "failed to emit ds/vector include");
+            return false;
+        }
+        return true;
+    }
+    if (dir->kind == IMPORT_KIND_DS_STACK) {
+        if (fputs("#include <margo_ds/stack.h>\n", out) == EOF) {
+            diagnostic_set(diag, 0, "failed to emit ds/stack include");
+            return false;
+        }
+        return true;
+    }
+    if (dir->kind == IMPORT_KIND_DS_QUEUE) {
+        if (fputs("#include <margo_ds/queue.h>\n", out) == EOF) {
+            diagnostic_set(diag, 0, "failed to emit ds/queue include");
+            return false;
+        }
+        return true;
+    }
+    if (dir->kind == IMPORT_KIND_DS_DEQUE) {
+        if (fputs("#include <margo_ds/deque.h>\n", out) == EOF) {
+            diagnostic_set(diag, 0, "failed to emit ds/deque include");
+            return false;
+        }
+        return true;
+    }
+    if (dir->kind == IMPORT_KIND_DS_HEAP) {
+        if (fputs("#include <margo_ds/heap.h>\n", out) == EOF) {
+            diagnostic_set(diag, 0, "failed to emit ds/heap include");
+            return false;
+        }
+        return true;
+    }
+    if (dir->kind == IMPORT_KIND_DS_HASHMAP) {
+        if (fputs("#include <margo_ds/hashmap.h>\n", out) == EOF) {
+            diagnostic_set(diag, 0, "failed to emit ds/hashmap include");
+            return false;
+        }
+        return true;
+    }
+    if (dir->kind == IMPORT_KIND_DS_SET) {
+        if (fputs("#include <margo_ds/set.h>\n", out) == EOF) {
+            diagnostic_set(diag, 0, "failed to emit ds/set include");
+            return false;
+        }
+        return true;
+    }
     if (dir->kind == IMPORT_KIND_STD) {
         const char *mapped = NULL;
         if (strcmp(dir->target, "io") == 0) {

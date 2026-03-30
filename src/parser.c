@@ -373,6 +373,30 @@ bool parser_parse_import(const char *source,
     } else if (strncmp(sanitized, "matrix/core", 11) == 0 && sanitized[11] == '\0') {
         kind = IMPORT_KIND_MATRIX_CORE;
         payload = "matrix/core";
+    } else if (strncmp(sanitized, "ds/core", 7) == 0 && sanitized[7] == '\0') {
+        kind = IMPORT_KIND_DS_CORE;
+        payload = "ds/core";
+    } else if (strncmp(sanitized, "ds/vector", 9) == 0 && sanitized[9] == '\0') {
+        kind = IMPORT_KIND_DS_VECTOR;
+        payload = "ds/vector";
+    } else if (strncmp(sanitized, "ds/stack", 8) == 0 && sanitized[8] == '\0') {
+        kind = IMPORT_KIND_DS_STACK;
+        payload = "ds/stack";
+    } else if (strncmp(sanitized, "ds/queue", 8) == 0 && sanitized[8] == '\0') {
+        kind = IMPORT_KIND_DS_QUEUE;
+        payload = "ds/queue";
+    } else if (strncmp(sanitized, "ds/deque", 8) == 0 && sanitized[8] == '\0') {
+        kind = IMPORT_KIND_DS_DEQUE;
+        payload = "ds/deque";
+    } else if (strncmp(sanitized, "ds/heap", 7) == 0 && sanitized[7] == '\0') {
+        kind = IMPORT_KIND_DS_HEAP;
+        payload = "ds/heap";
+    } else if (strncmp(sanitized, "ds/hashmap", 10) == 0 && sanitized[10] == '\0') {
+        kind = IMPORT_KIND_DS_HASHMAP;
+        payload = "ds/hashmap";
+    } else if (strncmp(sanitized, "ds/set", 6) == 0 && sanitized[6] == '\0') {
+        kind = IMPORT_KIND_DS_SET;
+        payload = "ds/set";
     } else {
         diagnostic_set(diag, at->line, "unsupported import prefix in '%s'", sanitized);
         free(sanitized);

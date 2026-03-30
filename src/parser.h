@@ -33,6 +33,7 @@
  *                              into "process/core.h"
  *  - IMPORT_KIND_MATRIX_CORE maps `@import matrix/core` into the matrix runtime
  *                              utilities header.
+ *  - IMPORT_KIND_DS_* map `@import ds/...` to built-in data-structure headers.
  */
 typedef enum {
     IMPORT_KIND_C,
@@ -51,6 +52,14 @@ typedef enum {
     IMPORT_KIND_THREADS_CORE,
     IMPORT_KIND_PROCESS_CORE,
     IMPORT_KIND_MATRIX_CORE,
+    IMPORT_KIND_DS_CORE,
+    IMPORT_KIND_DS_VECTOR,
+    IMPORT_KIND_DS_STACK,
+    IMPORT_KIND_DS_QUEUE,
+    IMPORT_KIND_DS_DEQUE,
+    IMPORT_KIND_DS_HEAP,
+    IMPORT_KIND_DS_HASHMAP,
+    IMPORT_KIND_DS_SET,
 } import_kind_t;
 
 /**

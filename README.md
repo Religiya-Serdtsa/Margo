@@ -70,6 +70,8 @@ C++ 바인딩 지원은 향후 마일스톤이다. 지시자는 주석으로 보
 | `@import std/file` | `<stdio.h>` |
 | `@import file/core` | `<stdio.h>` + 파일 패턴 검색 헬퍼 |
 | `@import network/core` | POSIX socket 헤더 + 네트워크 I/O 헬퍼 |
+| `@import ds/core` | `vector/stack/queue/deque/heap/hashmap/set` 통합 헤더 |
+| `@import ds/heap` 등 | `<margo_ds/*.h>` 개별 자료구조 헤더 |
 
 ### 쓰레드/프로세스 런타임 (Experimental)
 - `@import threads/core` — `threads <name> { locked_var { ... } threadN ... }` 문법을 지원하는 헤더 온리 런타임이다. `threadN.init(...)`, `threadN.join()`, `threads.<cluster>.join_all(chan)`, `threads.<cluster>.sync()`가 일관된 API로 노출되며, 추가 데코레이터 없이 `@chantype`, `@nochan`, `@independent`, `@lazyjoin`만 허용한다.
