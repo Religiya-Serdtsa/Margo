@@ -3,11 +3,16 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
+#include <unistd.h>
+extern char *realpath(const char *path, char *resolved_path);
+#endif
 
 #include "lexer.h"
 #include "parser.h"
@@ -87,6 +92,404 @@ static bool transpiler_copy_range(FILE *out, const char *src, size_t start, size
     }
     size_t len = end - start;
     return fwrite(src + start, 1, len, out) == len;
+}
+
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+
+typedef struct {
+    char *path;
+    char *content;
+    size_t length;
+} flattened_file_t;
+
+typedef struct {
+    flattened_file_t *items;
+    size_t count;
+    size_t capacity;
+} flattened_file_list_t;
+
+typedef struct {
+    char **items;
+    size_t count;
+    size_t capacity;
+} path_list_t;
+
+static char *tp_strdup(const char *src) {
+    if (!src) {
+        return NULL;
+    }
+    size_t len = strlen(src);
+    char *copy = malloc(len + 1);
+    if (!copy) {
+        return NULL;
+    }
+    memcpy(copy, src, len + 1);
+    return copy;
+}
+
+static void flattened_file_list_free(flattened_file_list_t *list) {
+    if (!list) {
+        return;
+    }
+    for (size_t i = 0; i < list->count; ++i) {
+        free(list->items[i].path);
+        free(list->items[i].content);
+    }
+    free(list->items);
+    list->items = NULL;
+    list->count = 0;
+    list->capacity = 0;
+}
+
+static bool flattened_file_list_append(flattened_file_list_t *list,
+                                       const char *path,
+                                       char *content,
+                                       size_t length) {
+    if (list->count == list->capacity) {
+        size_t new_cap = list->capacity ? list->capacity * 2 : 8;
+        flattened_file_t *new_items = realloc(list->items, new_cap * sizeof(*new_items));
+        if (!new_items) {
+            free(content);
+            return false;
+        }
+        list->items = new_items;
+        list->capacity = new_cap;
+    }
+    char *path_copy = tp_strdup(path);
+    if (!path_copy) {
+        free(content);
+        return false;
+    }
+    list->items[list->count].path = path_copy;
+    list->items[list->count].content = content;
+    list->items[list->count].length = length;
+    list->count++;
+    return true;
+}
+
+static bool path_list_contains(const path_list_t *list, const char *path) {
+    if (!list || !path) {
+        return false;
+    }
+    for (size_t i = 0; i < list->count; ++i) {
+        if (strcmp(list->items[i], path) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool path_list_push(path_list_t *list, const char *path) {
+    if (list->count == list->capacity) {
+        size_t new_cap = list->capacity ? list->capacity * 2 : 8;
+        char **new_items = realloc(list->items, new_cap * sizeof(*new_items));
+        if (!new_items) {
+            return false;
+        }
+        list->items = new_items;
+        list->capacity = new_cap;
+    }
+    char *copy = tp_strdup(path);
+    if (!copy) {
+        return false;
+    }
+    list->items[list->count++] = copy;
+    return true;
+}
+
+static void path_list_pop(path_list_t *list) {
+    if (!list || list->count == 0) {
+        return;
+    }
+    free(list->items[list->count - 1]);
+    list->items[list->count - 1] = NULL;
+    list->count--;
+}
+
+static void path_list_free(path_list_t *list) {
+    if (!list) {
+        return;
+    }
+    for (size_t i = 0; i < list->count; ++i) {
+        free(list->items[i]);
+    }
+    free(list->items);
+    list->items = NULL;
+    list->count = 0;
+    list->capacity = 0;
+}
+
+static const char *find_last_separator(const char *path) {
+    const char *slash = strrchr(path, '/');
+    const char *bslash = strrchr(path, '\\');
+    if (!slash) {
+        return bslash;
+    }
+    if (!bslash) {
+        return slash;
+    }
+    return (slash > bslash) ? slash : bslash;
+}
+
+static void parent_directory(const char *path, char *out, size_t out_sz) {
+    if (!path || !out || out_sz == 0) {
+        return;
+    }
+    const char *sep = find_last_separator(path);
+    if (!sep) {
+        snprintf(out, out_sz, ".");
+        return;
+    }
+    size_t len = (size_t)(sep - path);
+#ifdef _WIN32
+    if (len == 0) {
+        len = 1;
+    } else if (len == 2 && path[1] == ':') {
+        len = 3;
+    }
+#else
+    if (len == 0) {
+        len = 1;
+    }
+#endif
+    snprintf(out, out_sz, "%.*s", (int)len, path);
+}
+
+static bool is_absolute_path(const char *path) {
+    if (!path || !*path) {
+        return false;
+    }
+#ifdef _WIN32
+    if ((strlen(path) >= 2 && path[1] == ':') &&
+        ((strlen(path) >= 3 && (path[2] == '/' || path[2] == '\\')))) {
+        return true;
+    }
+    return path[0] == '/' || path[0] == '\\';
+#else
+    return path[0] == '/';
+#endif
+}
+
+static bool canonicalize_path(const char *input, char *resolved, size_t resolved_sz, diagnostic_t *diag) {
+    if (!input || !resolved || resolved_sz == 0) {
+        diagnostic_set(diag, 0, "invalid path resolution request");
+        return false;
+    }
+#ifdef _WIN32
+    if (!_fullpath(resolved, input, resolved_sz)) {
+        diagnostic_set(diag, 0, "failed to resolve %s: %s", input, strerror(errno));
+        return false;
+    }
+#else
+    if (!realpath(input, resolved)) {
+        diagnostic_set(diag, 0, "failed to resolve %s: %s", input, strerror(errno));
+        return false;
+    }
+#endif
+    return true;
+}
+
+static bool resolve_local_import_path(const char *parent_path,
+                                      const char *target,
+                                      char *resolved,
+                                      size_t resolved_sz,
+                                      diagnostic_t *diag) {
+    if (!target || !*target) {
+        diagnostic_set(diag, 0, "@import target is empty");
+        return false;
+    }
+    char candidate[PATH_MAX];
+    if (is_absolute_path(target)) {
+        if (snprintf(candidate, sizeof(candidate), "%s", target) >= (int)sizeof(candidate)) {
+            diagnostic_set(diag, 0, "path too long: %s", target);
+            return false;
+        }
+    } else {
+        char parent_dir[PATH_MAX];
+        parent_directory(parent_path, parent_dir, sizeof(parent_dir));
+        if (snprintf(candidate, sizeof(candidate), "%s/%s", parent_dir, target) >= (int)sizeof(candidate)) {
+            diagnostic_set(diag, 0, "path too long after joining %s and %s", parent_dir, target);
+            return false;
+        }
+    }
+    return canonicalize_path(candidate, resolved, resolved_sz, diag);
+}
+
+static bool flatten_collect_file(const char *path,
+                                 flattened_file_list_t *outputs,
+                                 path_list_t *stack,
+                                 path_list_t *visited,
+                                 diagnostic_t *diag);
+
+static bool flatten_entry_file(const char *entry_path,
+                               char **flat_source,
+                               size_t *flat_length,
+                               diagnostic_t *diag) {
+    flattened_file_list_t outputs = {0};
+    path_list_t stack = {0};
+    path_list_t visited = {0};
+    char resolved[PATH_MAX];
+    bool ok = canonicalize_path(entry_path, resolved, sizeof(resolved), diag);
+    if (ok) {
+        ok = flatten_collect_file(resolved, &outputs, &stack, &visited, diag);
+    }
+    if (!ok) {
+        flattened_file_list_free(&outputs);
+        path_list_free(&stack);
+        path_list_free(&visited);
+        return false;
+    }
+    FILE *out = open_memstream(flat_source, flat_length);
+    if (!out) {
+        diagnostic_set(diag, 0, "failed to allocate flattened buffer");
+        flattened_file_list_free(&outputs);
+        path_list_free(&stack);
+        path_list_free(&visited);
+        return false;
+    }
+    fputs("// AUTO-GENERATED: flattened Margo translation unit\n", out);
+    for (size_t i = 0; i < outputs.count; ++i) {
+        fprintf(out, "\n// ---- %s ----\n", outputs.items[i].path);
+        if (outputs.items[i].length > 0) {
+            fwrite(outputs.items[i].content, 1, outputs.items[i].length, out);
+            if (outputs.items[i].content[outputs.items[i].length - 1] != '\n') {
+                fputc('\n', out);
+            }
+        }
+    }
+    fclose(out);
+    flattened_file_list_free(&outputs);
+    path_list_free(&stack);
+    path_list_free(&visited);
+    return true;
+}
+
+static bool flatten_collect_file(const char *path,
+                                 flattened_file_list_t *outputs,
+                                 path_list_t *stack,
+                                 path_list_t *visited,
+                                 diagnostic_t *diag) {
+    if (path_list_contains(visited, path)) {
+        return true;
+    }
+    if (path_list_contains(stack, path)) {
+        diagnostic_set(diag, 0, "detected recursive import while expanding %s", path);
+        return false;
+    }
+    if (!path_list_push(stack, path)) {
+        diagnostic_set(diag, 0, "out of memory tracking import stack");
+        return false;
+    }
+    char *source = NULL;
+    size_t source_len = 0;
+    if (!read_file(path, &source, &source_len, diag)) {
+        path_list_pop(stack);
+        return false;
+    }
+    token_buffer_t tokens;
+    if (!lexer_tokenize(source, source_len, &tokens, diag)) {
+        free(source);
+        path_list_pop(stack);
+        return false;
+    }
+    char *kept_buf = NULL;
+    size_t kept_len = 0;
+    FILE *kept = open_memstream(&kept_buf, &kept_len);
+    if (!kept) {
+        diagnostic_set(diag, 0, "failed to create flattened buffer");
+        lexer_free(&tokens);
+        free(source);
+        path_list_pop(stack);
+        return false;
+    }
+    size_t last_emit = 0;
+    size_t i = 0;
+    while (i < tokens.count) {
+        import_directive_t dir;
+        if (parser_parse_import(source, &tokens, i, &dir, diag)) {
+            size_t next_index = dir.next_index;
+            if (dir.kind == IMPORT_KIND_LOCAL) {
+                if (!transpiler_copy_range(kept, source, last_emit, dir.start_offset)) {
+                    parser_free_import(&dir);
+                    fclose(kept);
+                    free(kept_buf);
+                    lexer_free(&tokens);
+                    free(source);
+                    path_list_pop(stack);
+                    diagnostic_set(diag, 0, "failed to copy local import prelude");
+                    return false;
+                }
+                last_emit = dir.end_offset;
+                char child_path[PATH_MAX];
+                if (!resolve_local_import_path(path, dir.target, child_path, sizeof(child_path), diag)) {
+                    parser_free_import(&dir);
+                    fclose(kept);
+                    free(kept_buf);
+                    lexer_free(&tokens);
+                    free(source);
+                    path_list_pop(stack);
+                    return false;
+                }
+                bool ok = flatten_collect_file(child_path, outputs, stack, visited, diag);
+                parser_free_import(&dir);
+                if (!ok) {
+                    fclose(kept);
+                    free(kept_buf);
+                    lexer_free(&tokens);
+                    free(source);
+                    path_list_pop(stack);
+                    return false;
+                }
+                if (next_index > i) {
+                    i = next_index;
+                } else {
+                    i++;
+                }
+                continue;
+            }
+            parser_free_import(&dir);
+            if (next_index > i) {
+                i = next_index;
+            } else {
+                i++;
+            }
+            continue;
+        }
+        if (diag && diag->has_error) {
+            fclose(kept);
+            free(kept_buf);
+            lexer_free(&tokens);
+            free(source);
+            path_list_pop(stack);
+            return false;
+        }
+        i++;
+    }
+    bool copy_ok = transpiler_copy_range(kept, source, last_emit, source_len);
+    fclose(kept);
+    lexer_free(&tokens);
+    free(source);
+    if (!copy_ok) {
+        free(kept_buf);
+        path_list_pop(stack);
+        diagnostic_set(diag, 0, "failed to finalize flattened buffer");
+        return false;
+    }
+    if (!path_list_push(visited, path)) {
+        free(kept_buf);
+        path_list_pop(stack);
+        diagnostic_set(diag, 0, "out of memory recording visited imports");
+        return false;
+    }
+    path_list_pop(stack);
+    bool appended = flattened_file_list_append(outputs, path, kept_buf, kept_len);
+    if (!appended) {
+        diagnostic_set(diag, 0, "out of memory storing flattened file");
+        return false;
+    }
+    return true;
 }
 
 static char *duplicate_range(const char *src, size_t start, size_t end) {
@@ -2230,7 +2633,7 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
     diagnostic_clear(diag);
     char *source = NULL;
     size_t source_len = 0;
-    if (!read_file(input_path, &source, &source_len, diag)) {
+    if (!flatten_entry_file(input_path, &source, &source_len, diag)) {
         return false;
     }
     token_buffer_t tokens;

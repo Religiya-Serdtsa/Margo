@@ -51,6 +51,7 @@ typedef enum {
     IMPORT_KIND_THREADS_CORE,
     IMPORT_KIND_PROCESS_CORE,
     IMPORT_KIND_MATRIX_CORE,
+    IMPORT_KIND_LOCAL,
 } import_kind_t;
 
 /**

@@ -269,6 +269,40 @@ static char *rewrite_increment(const char *expr, const char *loop_ident) {
     return dup_string(expr);
 }
 
+static void strip_optional_quotes(char *text) {
+    if (!text) {
+        return;
+    }
+    size_t len = strlen(text);
+    if (len >= 2 && ((text[0] == '"' && text[len - 1] == '"') ||
+                     (text[0] == '\'' && text[len - 1] == '\''))) {
+        memmove(text, text + 1, len - 2);
+        text[len - 2] = '\0';
+    }
+}
+
+static bool ends_with(const char *value, const char *suffix) {
+    size_t value_len = strlen(value);
+    size_t suffix_len = strlen(suffix);
+    if (suffix_len > value_len) {
+        return false;
+    }
+    return memcmp(value + value_len - suffix_len, suffix, suffix_len) == 0;
+}
+
+static bool is_local_import_target(const char *target) {
+    if (!target || target[0] == '\0') {
+        return false;
+    }
+    if (target[0] == '/' || target[0] == '.' || target[0] == '\\') {
+        return true;
+    }
+    if (strchr(target, '/') || strchr(target, '\\')) {
+        return true;
+    }
+    return ends_with(target, ".margo") || ends_with(target, ".mh");
+}
+
 /**
  * @brief Parse an `@import` directive out of the token stream.
  */
@@ -324,6 +358,7 @@ bool parser_parse_import(const char *source,
     }
     import_kind_t kind;
     const char *payload = NULL;
+    strip_optional_quotes(sanitized);
     if (strncmp(sanitized, "c/", 2) == 0) {
         kind = IMPORT_KIND_C;
         payload = sanitized + 2;
@@ -373,6 +408,9 @@ bool parser_parse_import(const char *source,
     } else if (strncmp(sanitized, "matrix/core", 11) == 0 && sanitized[11] == '\0') {
         kind = IMPORT_KIND_MATRIX_CORE;
         payload = "matrix/core";
+    } else if (is_local_import_target(sanitized)) {
+        kind = IMPORT_KIND_LOCAL;
+        payload = sanitized;
     } else {
         diagnostic_set(diag, at->line, "unsupported import prefix in '%s'", sanitized);
         free(sanitized);
@@ -716,3 +754,4 @@ bool parser_parse_while_header(const char *source,
 void parser_free_while_header(while_header_t *header) {
     free_condition_header(header);
 }
+#include <ctype.h>

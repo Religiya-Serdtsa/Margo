@@ -807,6 +807,143 @@ static bool collect_fn_signature(sema_state_t *st, size_t fn_idx) {
     return true;
 }
 
+/**
+ * @brief Parse an `extern` function prototype and register it for arity checks.
+ *
+ * `.mh` headers commonly use `extern` to forward-declare helpers implemented in
+ * C. These declarations do not include a function body, but we still need the
+ * signature so call-site validation can succeed.
+ */
+static bool collect_extern_signature(sema_state_t *st, size_t extern_idx) {
+    size_t i = skip_nl(st->tokens, extern_idx + 1);
+    if (i >= st->tokens->count) {
+        return true;
+    }
+    margo_type_t return_type = { .kind = MARGO_TYPE_UNKNOWN };
+    size_t type_start = i;
+    if (!sema_parse_type(st->source, st->tokens, &type_start, &return_type)) {
+        return true; /* Ignore externs we cannot parse (likely variables). */
+    }
+    size_t name_idx = skip_nl(st->tokens, type_start);
+    if (name_idx >= st->tokens->count ||
+        st->tokens->items[name_idx].kind != TOKEN_IDENTIFIER) {
+        sema_type_free(&return_type);
+        return true;
+    }
+    const token_t *name_tok = &st->tokens->items[name_idx];
+    size_t paren_idx = skip_nl(st->tokens, name_idx + 1);
+    if (paren_idx >= st->tokens->count ||
+        !token_is_symbol(&st->tokens->items[paren_idx], '(')) {
+        sema_type_free(&return_type);
+        return true;
+    }
+    sema_func_t fn;
+    memset(&fn, 0, sizeof(fn));
+    fn.name = sema_dup_range(st->source, name_tok->offset, name_tok->offset + name_tok->length);
+    if (!fn.name) {
+        sema_type_free(&return_type);
+        return false;
+    }
+    fn.return_type = return_type;
+    fn.decl_line = name_tok->line;
+    return_type.name = NULL;
+
+    size_t k = skip_nl(st->tokens, paren_idx + 1);
+    size_t param_cap = 0;
+    int depth_inside = 0;
+    bool closed = false;
+    while (k < st->tokens->count) {
+        const token_t *ptok = &st->tokens->items[k];
+        if (ptok->kind == TOKEN_EOF) {
+            break;
+        }
+        if (ptok->kind == TOKEN_NEWLINE) {
+            k++;
+            continue;
+        }
+        if (token_is_symbol(ptok, '(')) {
+            depth_inside++;
+            k++;
+            continue;
+        }
+        if (token_is_symbol(ptok, ')')) {
+            if (depth_inside == 0) {
+                closed = true;
+                break;
+            }
+            depth_inside--;
+            k++;
+            continue;
+        }
+        if (token_is_symbol(ptok, ',') && depth_inside == 0) {
+            k++;
+            continue;
+        }
+        if (token_is_symbol(ptok, '.')) {
+            fn.is_variadic = true;
+            k++;
+            continue;
+        }
+        margo_type_t ptype;
+        size_t type_end = k;
+        if (sema_parse_type(st->source, st->tokens, &type_end, &ptype)) {
+            size_t nm = skip_nl(st->tokens, type_end);
+            char *pname = NULL;
+            if (nm < st->tokens->count &&
+                st->tokens->items[nm].kind == TOKEN_IDENTIFIER) {
+                size_t af = skip_nl(st->tokens, nm + 1);
+                if (af < st->tokens->count && token_is_symbol(&st->tokens->items[af], '[')) {
+                    while (af < st->tokens->count &&
+                           !token_is_symbol(&st->tokens->items[af], ']')) {
+                        af++;
+                    }
+                    if (af < st->tokens->count) {
+                        af++;
+                    }
+                    k = af;
+                } else {
+                    k = nm + 1;
+                }
+                pname = sema_dup_range(st->source,
+                                       st->tokens->items[nm].offset,
+                                       st->tokens->items[nm].offset + st->tokens->items[nm].length);
+            } else {
+                k = type_end;
+            }
+            if (fn.param_count == param_cap) {
+                size_t nc = param_cap ? param_cap * 2 : 4;
+                margo_type_t *nt = realloc(fn.param_types, nc * sizeof(margo_type_t));
+                char       **nn = realloc(fn.param_names, nc * sizeof(char *));
+                if (!nt || !nn) {
+                    if (nt) {
+                        fn.param_types = nt;
+                    }
+                    if (nn) {
+                        fn.param_names = nn;
+                    }
+                    sema_func_free(&fn);
+                    sema_type_free(&ptype);
+                    free(pname);
+                    return false;
+                }
+                fn.param_types = nt;
+                fn.param_names = nn;
+                param_cap      = nc;
+            }
+            fn.param_types[fn.param_count] = ptype;
+            fn.param_names[fn.param_count] = pname;
+            fn.param_count++;
+            continue;
+        }
+        k++;
+    }
+    if (!closed) {
+        sema_func_free(&fn);
+        return false;
+    }
+    return funcreg_push(&st->funcreg, fn);
+}
+
 /* =========================================================================
  * Variable declaration detection
  * ====================================================================== */
@@ -1100,6 +1237,14 @@ bool sema_run(const char           *source,
             strncmp(tok->lexeme, "fn", tok->length) == 0 && tok->length == 2) {
             if (!collect_fn_signature(&st, i)) {
                 diagnostic_set(diag, tok->line, "sema: out of memory collecting fn signatures");
+                symtab_free(&st.symtab);
+                funcreg_free(&st.funcreg);
+                return false;
+            }
+        } else if (tok->kind == TOKEN_IDENTIFIER &&
+                   strncmp(tok->lexeme, "extern", tok->length) == 0 && tok->length == 6) {
+            if (!collect_extern_signature(&st, i)) {
+                diagnostic_set(diag, tok->line, "sema: out of memory collecting extern signatures");
                 symtab_free(&st.symtab);
                 funcreg_free(&st.funcreg);
                 return false;
