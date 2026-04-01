@@ -21,82 +21,82 @@ struct Coord {
 };
 
 fn struct Coord make_coord(int row, int col) {
-    struct Coord c = { .row = row, .col = col };
-    return c;
+    struct Coord c = { .row = row, .col = col }
+    return c
 }
 
 fn double tile_penalty(mat_neighbor_cell cell) {
-    if cell.value == 1 return 1000.0;
-    return 1.0;
+    if cell.value == 1 return 1000.0
+    return 1.0
 }
 
 fn double heuristic(struct Coord node, struct Coord goal) {
-    auto dr = abs(goal.row - node.row);
-    auto dc = abs(goal.col - node.col);
-    return (double)(dr + dc);
+    auto dr = abs(goal.row - node.row)
+    auto dc = abs(goal.col - node.col)
+    return (double)(dr + dc)
 }
 
 struct NeighborFilterCtx {
-    const int (*terrain)[GRID_COLS];
-    struct Coord center;
+    const int (*terrain)[GRID_COLS]
+    struct Coord center
 };
 
 fn bool passable_neighbor(mat_neighbor_cell cell, weird(void, 1) ctx_ptr) {
-    weird(struct NeighborFilterCtx, 1) ctx = ctx_ptr;
-    auto dr = abs((int)cell.index[0] - ctx->center.row);
-    auto dc = abs((int)cell.index[1] - ctx->center.col);
+    weird(struct NeighborFilterCtx, 1) ctx = ctx_ptr
+    auto dr = abs((int)cell.index[0] - ctx->center.row)
+    auto dc = abs((int)cell.index[1] - ctx->center.col)
     if dr + dc != 1 {
-        return false;
+        return false
     }
-    return ctx->terrain[cell.index[0]][cell.index[1]] == 0;
+    return ctx->terrain[cell.index[0]][cell.index[1]] == 0
 }
 
 struct ExpandContext {
-    auto_matrix traversal_cost;
-    auto_matrix g_score;
-    auto_matrix f_score;
-    auto_matrix open_mask;
-    auto_matrix came_row;
-    auto_matrix came_col;
-    struct Coord current;
-    struct Coord goal;
+    auto_matrix traversal_cost
+    auto_matrix g_score
+    auto_matrix f_score
+    auto_matrix open_mask
+    auto_matrix came_row
+    auto_matrix came_col
+    struct Coord current
+    struct Coord goal
 };
 
 fn bool relax_neighbor(mat_neighbor_cell cell, weird(void, 1) ctx_ptr) {
-    weird(struct ExpandContext, 1) ctx = ctx_ptr;
-    struct Coord step = make_coord((int)cell.index[0], (int)cell.index[1]);
-    auto current_cost = matrix_get(ctx->g_score, ctx->current.row, ctx->current.col);
-    auto tentative = current_cost + cell.value;
-    auto existing = matrix_get(ctx->g_score, step.row, step.col);
+    weird(struct ExpandContext, 1) ctx = ctx_ptr
+    struct Coord step = make_coord((int)cell.index[0], (int)cell.index[1])
+    auto current_cost = matrix_get(ctx->g_score, ctx->current.row, ctx->current.col)
+    auto tentative = current_cost + cell.value
+    auto existing = matrix_get(ctx->g_score, step.row, step.col)
     if tentative + 1e-9 < existing {
-        matrix_set(ctx->came_row, step.row, step.col, ctx->current.row);
-        matrix_set(ctx->came_col, step.row, step.col, ctx->current.col);
-        matrix_set(ctx->g_score, step.row, step.col, tentative);
-        matrix_set(ctx->f_score, step.row, step.col, tentative + heuristic(step, ctx->goal));
-        matrix_set(ctx->open_mask, step.row, step.col, 1);
+        matrix_set(ctx->came_row, step.row, step.col, ctx->current.row)
+        matrix_set(ctx->came_col, step.row, step.col, ctx->current.col)
+        matrix_set(ctx->g_score, step.row, step.col, tentative)
+        matrix_set(ctx->f_score, step.row, step.col, tentative + heuristic(step, ctx->goal))
+        matrix_set(ctx->open_mask, step.row, step.col, 1)
     }
-    return true;
+    return true
 }
 
 fn struct Coord select_lowest(auto_matrix open_mask, auto_matrix f_score) {
-    struct Coord best = { .row = -1, .col = -1 };
-    auto best_cost = 0.0;
-    auto total_rows = matrix_rows(f_score);
-    auto total_cols = matrix_cols(f_score);
+    struct Coord best = { .row = -1, .col = -1 }
+    auto best_cost = 0.0
+    auto total_rows = matrix_rows(f_score)
+    auto total_cols = matrix_cols(f_score)
     for r = 0; <total_rows; ++ {
         for c = 0; <total_cols; ++ {
             if matrix_get(open_mask, r, c) == 0 {
-                continue;
+                continue
             }
             auto cost = matrix_get(f_score, r, c);
             if best.row == -1 || cost < best_cost {
-                best.row = (int)r;
-                best.col = (int)c;
-                best_cost = cost;
+                best.row = (int)r
+                best.col = (int)c
+                best_cost = cost
             }
         }
     }
-    return best;
+    return best
 }
 
 fn void rebuild_path(auto_matrix came_row,
@@ -106,98 +106,98 @@ fn void rebuild_path(auto_matrix came_row,
                      auto_matrix path_mask) {
     struct Coord current = goal;
     while current.row >= 0 && current.col >= 0 {
-        matrix_set(path_mask, current.row, current.col, 1);
+        matrix_set(path_mask, current.row, current.col, 1)
         if current.row == start.row && current.col == start.col {
-            break;
+            break
         }
-        auto next_row = (int)matrix_get(came_row, current.row, current.col);
-        auto next_col = (int)matrix_get(came_col, current.row, current.col);
+        auto next_row = (int)matrix_get(came_row, current.row, current.col)
+        auto next_col = (int)matrix_get(came_col, current.row, current.col)
         if next_row < 0 || next_col < 0 {
-            break;
+            break
         }
-        current.row = next_row;
-        current.col = next_col;
+        current.row = next_row
+        current.col = next_col
     }
 }
 
 fn int count_path(auto_matrix mask) {
-    auto steps = 0;
-    auto total_rows = matrix_rows(mask);
-    auto total_cols = matrix_cols(mask);
+    auto steps = 0
+    auto total_rows = matrix_rows(mask)
+    auto total_cols = matrix_cols(mask)
     for r = 0; <total_rows; ++ {
         for c = 0; <total_cols; ++ {
             if matrix_get(mask, r, c) > 0.5 {
-                steps++;
+                steps++
             }
         }
     }
-    return steps;
+    return steps
 }
 
 fn void render_path(auto_matrix field,
                     auto_matrix path_mask,
                     struct Coord start,
                     struct Coord goal) {
-    print("S=start, G=goal, #=wall, *=route");
+    print("S=start, G=goal, #=wall, *=route")
     for r = 0; <GRID_ROWS; ++ {
         for c = 0; <GRID_COLS; ++ {
-            char glyph = '.';
-            auto tile = matrix_get(field, r, c);
+            char glyph = '.'
+            auto tile = matrix_get(field, r, c)
             if tile >= 500 {
-                glyph = '#';
+                glyph = '#'
             }
             if matrix_get(path_mask, r, c) > 0.5 {
-                glyph = '*';
+                glyph = '*'
             }
             if r == start.row && c == start.col {
-                glyph = 'S';
+                glyph = 'S'
             } else if r == goal.row && c == goal.col {
-                glyph = 'G';
+                glyph = 'G'
             }
-            print(glyph, sep = "", endl = "");
+            print(glyph, sep = "", endl = "")
         }
-        print("", endl = "\n");
+        print("", endl = "\n")
     }
 }
 
 fn int run_pathfinder() {
-    struct Coord start = make_coord(0, 0);
-    struct Coord goal = make_coord(GRID_ROWS - 1, GRID_COLS - 1);
+    struct Coord start = make_coord(0, 0)
+    struct Coord goal = make_coord(GRID_ROWS - 1, GRID_COLS - 1)
 
-    auto_matrix traversal_cost = matrix_map(terrain, tile_penalty);
-    auto_matrix g_score = matrix_fill(GRID_ROWS, GRID_COLS, 1e12);
-    auto_matrix f_score = matrix_fill(GRID_ROWS, GRID_COLS, 1e12);
-    auto_matrix came_row = matrix_fill(GRID_ROWS, GRID_COLS, -1);
-    auto_matrix came_col = matrix_fill(GRID_ROWS, GRID_COLS, -1);
-    auto_matrix open_mask = matrix_fill(GRID_ROWS, GRID_COLS, 0);
-    auto_matrix path_mask = matrix_fill(GRID_ROWS, GRID_COLS, 0);
+    auto_matrix traversal_cost = matrix_map(terrain, tile_penalty)
+    auto_matrix g_score = matrix_fill(GRID_ROWS, GRID_COLS, 1e12)
+    auto_matrix f_score = matrix_fill(GRID_ROWS, GRID_COLS, 1e12)
+    auto_matrix came_row = matrix_fill(GRID_ROWS, GRID_COLS, -1)
+    auto_matrix came_col = matrix_fill(GRID_ROWS, GRID_COLS, -1)
+    auto_matrix open_mask = matrix_fill(GRID_ROWS, GRID_COLS, 0)
+    auto_matrix path_mask = matrix_fill(GRID_ROWS, GRID_COLS, 0)
 
-    matrix_set(g_score, start.row, start.col, 0.0);
-    matrix_set(f_score, start.row, start.col, heuristic(start, goal));
-    matrix_set(open_mask, start.row, start.col, 1);
+    matrix_set(g_score, start.row, start.col, 0.0)
+    matrix_set(f_score, start.row, start.col, heuristic(start, goal))
+    matrix_set(open_mask, start.row, start.col, 1)
 
-    auto visited = 0;
-    auto reached_goal = 0;
+    auto visited = 0
+    auto reached_goal = 0
 
     while true {
-        struct Coord current = select_lowest(open_mask, f_score);
+        struct Coord current = select_lowest(open_mask, f_score)
         if current.row < 0 {
-            break;
+            break
         }
         visited++;
         if current.row == goal.row && current.col == goal.col {
-            reached_goal = 1;
-            break;
+            reached_goal = 1
+            break
         }
-        matrix_set(open_mask, current.row, current.col, 0);
+        matrix_set(open_mask, current.row, current.col, 0)
 
-        struct NeighborFilterCtx filter_ctx = { .terrain = terrain, .center = current };
+        struct NeighborFilterCtx filter_ctx = { .terrain = terrain, .center = current }
         neighbor_view neighbors = matrix_neighbor_with_filter(traversal_cost,
                                                               current.row,
                                                               current.col,
                                                               1,
                                                               passable_neighbor,
-                                                              &filter_ctx);
+                                                              &filter_ctx)
         struct ExpandContext relax_ctx = {
             .traversal_cost = traversal_cost,
             .g_score = g_score,
@@ -207,23 +207,23 @@ fn int run_pathfinder() {
             .came_col = came_col,
             .current = current,
             .goal = goal,
-        };
-        neighbor_view_for_each(&neighbors, relax_neighbor, &relax_ctx);
+        }
+        neighbor_view_for_each(&neighbors, relax_neighbor, &relax_ctx)
     }
 
     if !reached_goal {
-        print("경로를 찾지 못했습니다.");
-        return 1;
+        print("경로를 찾지 못했습니다.")
+        return 1
     }
 
-    rebuild_path(came_row, came_col, start, goal, path_mask);
-    render_path(traversal_cost, path_mask, start, goal);
-    auto steps = count_path(path_mask);
-    print("경로 길이:", steps, "  확장한 노드:", visited);
-    return 0;
+    rebuild_path(came_row, came_col, start, goal, path_mask)
+    render_path(traversal_cost, path_mask, start, goal)
+    auto steps = count_path(path_mask)
+    print("경로 길이:", steps, "  확장한 노드:", visited)
+    return 0
 }
 
 fn int start(int argc, weird(char, 2) argv) {
-    auto rc = run_pathfinder();
-    return rc;
+    auto rc = run_pathfinder()
+    return rc
 }
