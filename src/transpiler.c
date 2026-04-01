@@ -121,12 +121,25 @@ static char *tp_strdup(const char *src) {
         return NULL;
     }
     size_t len = strlen(src);
-    char *copy = malloc(len + 1);
-    if (!copy) {
+    char *dup = malloc(len + 1);
+    if (!dup) {
         return NULL;
     }
-    memcpy(copy, src, len + 1);
-    return copy;
+    memcpy(dup, src, len + 1);
+    return dup;
+}
+
+static char *tp_strndup(const char *src, size_t len) {
+    if (!src) {
+        return NULL;
+    }
+    char *dup = malloc(len + 1);
+    if (!dup) {
+        return NULL;
+    }
+    memcpy(dup, src, len);
+    dup[len] = '\0';
+    return dup;
 }
 
 static void flattened_file_list_free(flattened_file_list_t *list) {
@@ -219,6 +232,210 @@ static void path_list_free(path_list_t *list) {
     list->items = NULL;
     list->count = 0;
     list->capacity = 0;
+}
+
+typedef struct {
+    char **names;
+    size_t count;
+    size_t capacity;
+} struct_tag_list_t;
+
+static void struct_tag_list_free(struct_tag_list_t *list) {
+    if (!list) {
+        return;
+    }
+    for (size_t i = 0; i < list->count; ++i) {
+        free(list->names[i]);
+    }
+    free(list->names);
+    list->names = NULL;
+    list->count = 0;
+    list->capacity = 0;
+}
+
+static bool struct_tag_list_contains(const struct_tag_list_t *list, const char *text, size_t len) {
+    if (!list || !text) {
+        return false;
+    }
+    for (size_t i = 0; i < list->count; ++i) {
+        if (strlen(list->names[i]) == len && strncmp(list->names[i], text, len) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool struct_tag_list_append(struct_tag_list_t *list, const char *text, size_t len) {
+    if (!list || !text || len == 0) {
+        return true;
+    }
+    if (struct_tag_list_contains(list, text, len)) {
+        return true;
+    }
+    if (list->count == list->capacity) {
+        size_t new_cap = list->capacity ? list->capacity * 2 : 8;
+        char **new_items = realloc(list->names, new_cap * sizeof(char *));
+        if (!new_items) {
+            return false;
+        }
+        list->names = new_items;
+        list->capacity = new_cap;
+    }
+    char *copy = tp_strndup(text, len);
+    if (!copy) {
+        return false;
+    }
+    list->names[list->count++] = copy;
+    return true;
+}
+
+static size_t skip_newlines(const token_buffer_t *tokens, size_t index) {
+    size_t i = index;
+    while (i < tokens->count && tokens->items[i].kind == TOKEN_NEWLINE) {
+        i++;
+    }
+    return i;
+}
+
+static bool collect_struct_tags(const token_buffer_t *tokens, struct_tag_list_t *tags) {
+    if (!tokens || !tags) {
+        return true;
+    }
+    for (size_t i = 0; i < tokens->count; ++i) {
+        const token_t *tok = &tokens->items[i];
+        if (tok->kind != TOKEN_IDENTIFIER) {
+            continue;
+        }
+        if (!token_is_identifier(tok, "struct")) {
+            continue;
+        }
+        size_t name_idx = skip_newlines(tokens, i + 1);
+        if (name_idx >= tokens->count) {
+            continue;
+        }
+        const token_t *name_tok = &tokens->items[name_idx];
+        if (name_tok->kind != TOKEN_IDENTIFIER) {
+            continue;
+        }
+        if (!struct_tag_list_append(tags, name_tok->lexeme, name_tok->length)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool append_bytes(char **buf, size_t *cap, size_t *used, const char *data, size_t len) {
+    if (!buf || !cap || !used || !data || len == 0) {
+        if (len == 0) {
+            return true;
+        }
+    }
+    size_t needed = *used + len + 1;
+    if (needed > *cap) {
+        size_t new_cap = *cap ? *cap : 64;
+        while (new_cap < needed) {
+            new_cap *= 2;
+        }
+        char *new_buf = realloc(*buf, new_cap);
+        if (!new_buf) {
+            return false;
+        }
+        *buf = new_buf;
+        *cap = new_cap;
+    }
+    memcpy(*buf + *used, data, len);
+    *used += len;
+    return true;
+}
+
+static bool rewrite_weird_struct_args(char **source,
+                                      size_t *length,
+                                      const token_buffer_t *tokens,
+                                      diagnostic_t *diag,
+                                      bool *changed_out) {
+    if (!source || !length || !tokens) {
+        return true;
+    }
+    if (changed_out) {
+        *changed_out = false;
+    }
+    struct_tag_list_t tags = {0};
+    if (!collect_struct_tags(tokens, &tags)) {
+        struct_tag_list_free(&tags);
+        diagnostic_set(diag, 0, "out of memory while tracking struct tags");
+        return false;
+    }
+    if (tags.count == 0) {
+        struct_tag_list_free(&tags);
+        return true;
+    }
+    size_t cap = *length + 1;
+    char *out = malloc(cap);
+    if (!out) {
+        struct_tag_list_free(&tags);
+        diagnostic_set(diag, 0, "out of memory while normalizing weird() arguments");
+        return false;
+    }
+    size_t written = 0;
+    size_t last_emit = 0;
+    bool changed = false;
+    for (size_t i = 0; i < tokens->count; ++i) {
+        const token_t *tok = &tokens->items[i];
+        if (tok->kind != TOKEN_IDENTIFIER || !token_is_identifier(tok, "weird")) {
+            continue;
+        }
+        size_t open_idx = skip_newlines(tokens, i + 1);
+        if (open_idx >= tokens->count || !token_is_symbol(&tokens->items[open_idx], '(')) {
+            continue;
+        }
+        size_t arg_idx = skip_newlines(tokens, open_idx + 1);
+        if (arg_idx >= tokens->count) {
+            continue;
+        }
+        const token_t *arg_tok = &tokens->items[arg_idx];
+        if (arg_tok->kind != TOKEN_IDENTIFIER) {
+            continue;
+        }
+        if (token_is_identifier(arg_tok, "struct")) {
+            continue;
+        }
+        if (!struct_tag_list_contains(&tags, arg_tok->lexeme, arg_tok->length)) {
+            continue;
+        }
+        size_t prefix_len = arg_tok->offset - last_emit;
+        if (!append_bytes(&out, &cap, &written, *source + last_emit, prefix_len) ||
+            !append_bytes(&out, &cap, &written, "struct ", strlen("struct ")) ||
+            !append_bytes(&out, &cap, &written, arg_tok->lexeme, arg_tok->length)) {
+            free(out);
+            struct_tag_list_free(&tags);
+            diagnostic_set(diag, 0, "out of memory while normalizing weird() arguments");
+            return false;
+        }
+        last_emit = arg_tok->offset + arg_tok->length;
+        changed = true;
+    }
+    if (!changed) {
+        struct_tag_list_free(&tags);
+        free(out);
+        return true;
+    }
+    if (last_emit < *length) {
+        if (!append_bytes(&out, &cap, &written, *source + last_emit, *length - last_emit)) {
+            free(out);
+            struct_tag_list_free(&tags);
+            diagnostic_set(diag, 0, "out of memory while finalizing weird() normalization");
+            return false;
+        }
+    }
+    out[written] = '\0';
+    free(*source);
+    *source = out;
+    *length = written;
+    struct_tag_list_free(&tags);
+    if (changed_out) {
+        *changed_out = true;
+    }
+    return true;
 }
 
 static const char *find_last_separator(const char *path) {
@@ -1538,7 +1755,7 @@ static bool insert_implicit_semicolons(char **buffer, size_t *size, diagnostic_t
         if (c == '\r' || c == '\n') {
             if (line_is_directive && has_pending_user_state) {
                 in_user_section = pending_user_state;
-            } else if (!line_is_directive && in_user_section && !in_line_comment && !in_block_comment) {
+            } else if (!line_is_directive && in_user_section && last_non_ws != '\0') {
                 bool need_semicolon = should_insert_semicolon(last_non_ws);
                 if (!need_semicolon && last_non_ws == '}' &&
                     (line_has_assignment || line_closed_aggregate)) {
@@ -1760,8 +1977,29 @@ static bool emit_include_for_import(FILE *out, const import_directive_t *dir, di
     if (dir->kind == IMPORT_KIND_C) {
         const char *name = dir->target;
         size_t len = strlen(name);
-        bool has_suffix = len >= 2 && strcmp(name + len - 2, ".h") == 0;
-        const char *fmt = has_suffix ? "#include <%s>\n" : "#include <%s.h>\n";
+        const char *last_slash = strrchr(name, '/');
+        const char *last_backslash = strrchr(name, '\\');
+        const char *path_sep = last_slash;
+        if (!path_sep || (last_backslash && last_backslash > path_sep)) {
+            path_sep = last_backslash;
+        }
+        const char *last_dot = strrchr(name, '.');
+        bool has_suffix = false;
+        if (last_dot && last_dot > (path_sep ? path_sep : name)) {
+            has_suffix = true;
+        }
+        bool needs_quotes = false;
+        if (name[0] == '/' || name[0] == '.' || name[0] == '\\') {
+            needs_quotes = true;
+        } else if (strchr(name, '/') || strchr(name, '\\')) {
+            needs_quotes = true;
+        }
+        const char *fmt = NULL;
+        if (needs_quotes) {
+            fmt = has_suffix ? "#include \"%s\"\n" : "#include \"%s.h\"\n";
+        } else {
+            fmt = has_suffix ? "#include <%s>\n" : "#include <%s.h>\n";
+        }
         if (fprintf(out, fmt, name) < 0) {
             diagnostic_set(diag, 0, "failed to emit include for %s", name);
             return false;
@@ -2640,6 +2878,20 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
     if (!lexer_tokenize(source, source_len, &tokens, diag)) {
         free(source);
         return false;
+    }
+
+    bool weird_changed = false;
+    if (!rewrite_weird_struct_args(&source, &source_len, &tokens, diag, &weird_changed)) {
+        lexer_free(&tokens);
+        free(source);
+        return false;
+    }
+    if (weird_changed) {
+        lexer_free(&tokens);
+        if (!lexer_tokenize(source, source_len, &tokens, diag)) {
+            free(source);
+            return false;
+        }
     }
 
     /* ---- Semantic analysis pass ---------------------------------------- */
