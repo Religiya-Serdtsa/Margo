@@ -942,6 +942,101 @@ static void raii_live_free(raii_live_t *live) {
     live->capacity = 0;
 }
 
+/* =========================================================================
+ * defer stack (explicit scope-exit statements)
+ * ====================================================================== */
+typedef struct {
+    char *expression; /**< Heap-allocated expression string */
+    int   scope_depth; /**< Brace depth at point of defer */
+} defer_entry_t;
+
+typedef struct {
+    defer_entry_t *items;
+    size_t         count;
+    size_t         capacity;
+} defer_stack_t;
+
+static bool defer_push(defer_stack_t *stack, const char *expression, int depth) {
+    if (!stack || !expression) {
+        return false;
+    }
+    (void)depth; /* used in debug builds */
+    if (stack->count == stack->capacity) {
+        size_t new_cap = stack->capacity ? stack->capacity * 2 : 16;
+        defer_entry_t *new_items = realloc(stack->items, new_cap * sizeof(defer_entry_t));
+        if (!new_items) {
+            return false;
+        }
+        stack->items = new_items;
+        stack->capacity = new_cap;
+    }
+    size_t expr_len = strlen(expression);
+    char *copy = malloc(expr_len + 1);
+    if (!copy) {
+        return false;
+    }
+    memcpy(copy, expression, expr_len + 1);
+    stack->items[stack->count].expression = copy;
+    stack->items[stack->count].scope_depth = depth;
+    stack->count++;
+    return true;
+}
+
+static bool defer_emit_scope(defer_stack_t *stack, int depth, FILE *out) {
+    if (!stack) {
+        return true;
+    }
+    bool ok = true;
+    for (size_t i = stack->count; i > 0; --i) {
+        defer_entry_t *e = &stack->items[i - 1];
+        if (e->scope_depth != depth) {
+            continue;
+        }
+        if (fprintf(out, "(%s);\n", e->expression) < 0) {
+            ok = false;
+        }
+        free(e->expression);
+        memmove(&stack->items[i - 1], &stack->items[i],
+                (stack->count - i) * sizeof(defer_entry_t));
+        stack->count--;
+    }
+    return ok;
+}
+
+static bool defer_emit_return(defer_stack_t *stack, int min_depth, int max_depth, FILE *out) {
+    if (!stack) {
+        return true;
+    }
+    bool ok = true;
+    for (size_t i = stack->count; i > 0; --i) {
+        defer_entry_t *e = &stack->items[i - 1];
+        if (e->scope_depth < min_depth || e->scope_depth > max_depth) {
+            continue;
+        }
+        if (fprintf(out, "(%s);\n", e->expression) < 0) {
+            ok = false;
+        }
+        free(e->expression);
+        memmove(&stack->items[i - 1], &stack->items[i],
+                (stack->count - i) * sizeof(defer_entry_t));
+        stack->count--;
+    }
+    return ok;
+}
+
+static void defer_free(defer_stack_t *stack) {
+    if (!stack) {
+        return;
+    }
+    for (size_t i = 0; i < stack->count; ++i) {
+        free(stack->items[i].expression);
+    }
+    free(stack->items);
+    stack->items = NULL;
+    stack->count = 0;
+    stack->capacity = 0;
+}
+
 /**
  * @brief Check whether token at *index* is `IDENT = alloc(` and register
  *        the variable as owned if so.
@@ -1162,6 +1257,7 @@ static bool handle_fn_keyword(FILE *out,
  * @brief Emit the macro prelude shared by every transpiled translation unit.
  */
 static void emit_prelude(FILE *out) {
+    fputs("#ifdef __cplusplus\nextern \"C\" {\n#endif\n", out);
     static const char *lines[] = {
         "#include <stdbool.h>\n",
         "#include <stddef.h>\n",
@@ -1417,12 +1513,10 @@ static void emit_prelude(FILE *out) {
         "    unsigned long *: margo_scan_param_unsigned_long, \\\n",
         "    long long *: margo_scan_param_long_long, \\\n",
         "    unsigned long long *: margo_scan_param_unsigned_long_long, \\\n",
-        "    size_t *: margo_scan_param_size_t, \\\n",
         "    float *: margo_scan_param_float, \\\n",
         "    double *: margo_scan_param_double, \\\n",
         "    long double *: margo_scan_param_long_double, \\\n",
         "    char *: margo_scan_param_string, \\\n",
-        "    string: margo_scan_param_const_string, \\\n",
         "    default: margo_scan_param_unsupported \\\n",
         ")(value)\n",
         "static inline int margo_scan_run(const margo_scan_param_t *params, size_t count, bool require_newline) {\n",
@@ -1687,6 +1781,7 @@ static void emit_prelude(FILE *out) {
     for (size_t i = 0; lines[i]; ++i) {
         fputs(lines[i], out);
     }
+    fputs("#ifdef __cplusplus\n}\n#endif\n", out);
 }
 
 /**
@@ -1880,7 +1975,7 @@ static bool insert_implicit_semicolons(char **buffer, size_t *size, diagnostic_t
                 line_has_assignment = true;
             }
             if (pending_aggregate_keyword) {
-                if (c == '=' || c == ';' || c == ',') {
+                if (c == ';' || c == ',') {
                     pending_aggregate_keyword = false;
                 }
             }
@@ -2007,11 +2102,13 @@ static bool emit_include_for_import(FILE *out, const import_directive_t *dir, di
         return true;
     }
     if (dir->kind == IMPORT_KIND_CPP) {
-        /* C++ binding support is a future milestone.  Preserve as comment so
-         * the source remains parseable and the intent is documented. */
-        if (fprintf(out, "/* @import c++/%s (C++ bindings: future milestone) */\n",
-                    dir->target ? dir->target : "") < 0) {
-            diagnostic_set(diag, 0, "failed to emit c++ import stub");
+        /* C++ binding support: emit the include inside an extern "C" guard
+         * so that C++ headers can be included safely in Margo sources. */
+        const char *name = dir->target;
+        if (fprintf(out, "#ifdef __cplusplus\nextern \"C\" {\n#endif\n") < 0 ||
+            fprintf(out, "#include <%s>\n", name) < 0 ||
+            fprintf(out, "#ifdef __cplusplus\n}\n#endif\n") < 0) {
+            diagnostic_set(diag, 0, "failed to emit c++ import");
             return false;
         }
         return true;
@@ -2138,6 +2235,41 @@ static bool emit_include_for_import(FILE *out, const import_directive_t *dir, di
     if (dir->kind == IMPORT_KIND_MATRIX_CORE) {
         if (fputs("#include <margo_matrix/core.h>\n", out) == EOF) {
             diagnostic_set(diag, 0, "failed to emit matrix/core include");
+            return false;
+        }
+        return true;
+    }
+    if (dir->kind == IMPORT_KIND_MARGO_STD_VECTOR) {
+        if (fputs("#include <margo_std/vector.h>\n", out) == EOF) {
+            diagnostic_set(diag, 0, "failed to emit margo_std/vector include");
+            return false;
+        }
+        return true;
+    }
+    if (dir->kind == IMPORT_KIND_MARGO_STD_HASHMAP) {
+        if (fputs("#include <margo_std/hashmap.h>\n", out) == EOF) {
+            diagnostic_set(diag, 0, "failed to emit margo_std/hashmap include");
+            return false;
+        }
+        return true;
+    }
+    if (dir->kind == IMPORT_KIND_MARGO_STD_RESULT) {
+        if (fputs("#include <margo_std/result.h>\n", out) == EOF) {
+            diagnostic_set(diag, 0, "failed to emit margo_std/result include");
+            return false;
+        }
+        return true;
+    }
+    if (dir->kind == IMPORT_KIND_MARGO_STD_OPTIONAL) {
+        if (fputs("#include <margo_std/optional.h>\n", out) == EOF) {
+            diagnostic_set(diag, 0, "failed to emit margo_std/optional include");
+            return false;
+        }
+        return true;
+    }
+    if (dir->kind == IMPORT_KIND_MARGO_STD_STRING_BUILDER) {
+        if (fputs("#include <margo_std/string_builder.h>\n", out) == EOF) {
+            diagnostic_set(diag, 0, "failed to emit margo_std/string_builder include");
             return false;
         }
         return true;
@@ -2571,6 +2703,7 @@ static bool handle_scan_call(FILE *out,
                              size_t *index,
                              size_t *last_emit,
                              bool require_newline,
+                             bool needs_address_of,
                              bool *used_std_io,
                              size_t *std_io_line,
                              diagnostic_t *diag) {
@@ -2682,6 +2815,7 @@ static bool handle_scan_call(FILE *out,
                 return false;
             }
             if (fputs("MARGO_SCAN_PARAM(", out) < 0 ||
+                (needs_address_of && fputs("&", out) < 0) ||
                 fputs(args.items[arg_idx], out) < 0 ||
                 fputs(")", out) < 0) {
                 diagnostic_set(diag, tokens->items[i].line, "failed to emit Scan argument");
@@ -2922,6 +3056,7 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
 
     /* Runtime RAII live tracker – populated inline during the code-gen pass */
     raii_live_t raii_live = {0};
+    defer_stack_t defer_stack = {0};
 
     /* ---- Code generation pass ------------------------------------------ */
     char *generated = NULL;
@@ -2948,6 +3083,11 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
     bool std_io_imported = false;
     bool std_io_used = false;
     size_t std_io_use_line = 0;
+    /* Pending for-in array: when we see the opening brace of a for-in array
+       loop, we inject `auto var = iterable[idx];` right after it. */
+    bool pending_for_in_array = false;
+    char pending_for_in_var[64] = {0};
+    char *pending_for_in_iterable = NULL;
     for (size_t i = 0; ok && i < tokens.count; ++i) {
         token_t *tok = &tokens.items[i];
         if (tok->kind == TOKEN_EOF) {
@@ -3034,7 +3174,8 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
         }
         if (token_is_identifier(tok, "Scan") || token_is_identifier(tok, "ScanLine")) {
             bool require_newline = token_is_identifier(tok, "ScanLine");
-            if (!handle_scan_call(out, source, &tokens, &i, &last_emit, require_newline, &std_io_used, &std_io_use_line, diag)) {
+            bool needs_address_of = token_is_identifier(tok, "Scan");
+            if (!handle_scan_call(out, source, &tokens, &i, &last_emit, require_newline, needs_address_of, &std_io_used, &std_io_use_line, diag)) {
                 ok = false;
                 break;
             }
@@ -3048,26 +3189,284 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
             if (lookahead < tokens.count && token_is_symbol(&tokens.items[lookahead], '(')) {
                 continue;
             }
+            /* Try regular for header first, then for-in */
             for_header_t header;
-            if (!parser_parse_for_header(source, &tokens, i, &header, diag)) {
-                ok = false;
-                break;
-            }
-            if (!transpiler_copy_range(out, source, last_emit, header.start_offset)) {
-                diagnostic_set(diag, 0, "failed to copy prefix before for loop");
+            bool is_regular_for = parser_parse_for_header(source, &tokens, i, &header, diag);
+            if (is_regular_for) {
+                if (!transpiler_copy_range(out, source, last_emit, header.start_offset)) {
+                    diagnostic_set(diag, 0, "failed to copy prefix before for loop");
+                    parser_free_for_header(&header);
+                    ok = false;
+                    break;
+                }
+                if (header.has_initializer) {
+                    fprintf(out, "for (%s; %s; %s)", header.initializer, header.condition, header.increment);
+                } else {
+                    fprintf(out, "for (; %s; %s)", header.condition, header.increment);
+                }
+                fputs(header.trailing_ws, out);
+                last_emit = header.block_offset;
+                i = header.next_index ? header.next_index - 1 : i;
                 parser_free_for_header(&header);
+                continue;
+            }
+            /* Reset diagnostic and try for-in */
+            diagnostic_clear(diag);
+            for_in_header_t in_header;
+            if (parser_parse_for_in_header(source, &tokens, i, &in_header, diag)) {
+                if (!transpiler_copy_range(out, source, last_emit, in_header.start_offset)) {
+                    diagnostic_set(diag, 0, "failed to copy prefix before for-in loop");
+                    parser_free_for_in_header(&in_header);
+                    ok = false;
+                    break;
+                }
+                if (in_header.kind == FOR_IN_KIND_RANGE) {
+                    const char *op = in_header.range_inclusive ? "<=" : "<";
+                    fprintf(out, "for (auto %s = %s; %s %s %s; ++%s)",
+                            in_header.loop_var, in_header.range_start,
+                            in_header.loop_var, op, in_header.range_end,
+                            in_header.loop_var);
+                } else {
+                    /* array iteration – emit the for header, then wait for
+                       the opening brace to inject the loop variable. */
+                    fprintf(out, "for (size_t _margo_i = 0; _margo_i < (sizeof(%s)/sizeof((%s)[0])); ++_margo_i)",
+                            in_header.iterable, in_header.iterable);
+                    pending_for_in_array = true;
+                    size_t vlen = strlen(in_header.loop_var);
+                    if (vlen >= sizeof(pending_for_in_var)) {
+                        vlen = sizeof(pending_for_in_var) - 1;
+                    }
+                    memcpy(pending_for_in_var, in_header.loop_var, vlen);
+                    pending_for_in_var[vlen] = '\0';
+                    free(pending_for_in_iterable);
+                    pending_for_in_iterable = tp_strdup(in_header.iterable);
+                    last_emit = in_header.block_offset;
+                    i = in_header.next_index ? in_header.next_index - 1 : i;
+                    parser_free_for_in_header(&in_header);
+                    continue;
+                }
+                fputs(in_header.trailing_ws, out);
+                last_emit = in_header.block_offset;
+                i = in_header.next_index ? in_header.next_index - 1 : i;
+                parser_free_for_in_header(&in_header);
+                continue;
+            }
+            ok = false;
+            break;
+        }
+        if (token_is_identifier(tok, "threads")) {
+            threads_block_t block;
+            if (!parser_parse_threads_block(source, &tokens, i, &block, diag)) {
                 ok = false;
                 break;
             }
-            if (header.has_initializer) {
-                fprintf(out, "for (%s; %s; %s)", header.initializer, header.condition, header.increment);
-            } else {
-                fprintf(out, "for (; %s; %s)", header.condition, header.increment);
+            if (!transpiler_copy_range(out, source, last_emit, block.start_offset)) {
+                parser_free_threads_block(&block);
+                ok = false;
+                break;
             }
-            fputs(header.trailing_ws, out);
-            last_emit = header.block_offset;
-            i = header.next_index ? header.next_index - 1 : i;
-            parser_free_for_header(&header);
+            /* Emit each thread body as a static C function */
+            for (size_t t = 0; t < block.thread_count; ++t) {
+                thread_def_t *td = &block.threads[t];
+                fprintf(out, "\nstatic void %s_%s_body(int id, void *arg) {\n    (void)id; (void)arg;\n",
+                        block.cluster_name, td->name);
+                size_t body_content_start = td->body_start_offset + 1;
+                size_t body_content_end = td->body_end_offset - 1;
+                while (body_content_start < body_content_end &&
+                       isspace((unsigned char)source[body_content_start])) {
+                    body_content_start++;
+                }
+                while (body_content_end > body_content_start &&
+                       isspace((unsigned char)source[body_content_end - 1])) {
+                    body_content_end--;
+                }
+                if (body_content_start < body_content_end) {
+                    transpiler_copy_range(out, source, body_content_start, body_content_end);
+                }
+                fprintf(out, "\n}\n");
+            }
+            /* Emit cluster and handle declarations */
+            fprintf(out, "\nthreads_cluster_t %s = {0};\n", block.cluster_name);
+            for (size_t t = 0; t < block.thread_count; ++t) {
+                fprintf(out, "threads_thread_handle_t %s_%s_handle = {0};\n",
+                        block.cluster_name, block.threads[t].name);
+            }
+            fprintf(out, "threads_thread_handle_t *%s__handles[] = {\n", block.cluster_name);
+            for (size_t t = 0; t < block.thread_count; ++t) {
+                fprintf(out, "    &%s_%s_handle,\n", block.cluster_name, block.threads[t].name);
+            }
+            fprintf(out, "};\n");
+            fprintf(out, "size_t %s__handle_count = %zu;\n", block.cluster_name, block.thread_count);
+            /* Replace original block with a comment */
+            fprintf(out, "/* threads '%s' lowered */", block.cluster_name);
+            last_emit = block.end_offset;
+            i = block.next_index ? block.next_index - 1 : i;
+            parser_free_threads_block(&block);
+            continue;
+        }
+        /* threads.cluster.thread.init(arg) → threads_thread_start(...) */
+        if (tok->kind == TOKEN_IDENTIFIER && i + 5 < tokens.count) {
+            if (token_is_symbol(&tokens.items[i + 1], '.') &&
+                tokens.items[i + 2].kind == TOKEN_IDENTIFIER &&
+                token_is_symbol(&tokens.items[i + 3], '.') &&
+                token_is_identifier(&tokens.items[i + 4], "init") &&
+                token_is_symbol(&tokens.items[i + 5], '(')) {
+                size_t paren_idx = i + 5;
+                int depth = 0;
+                size_t closing_idx = SIZE_MAX;
+                for (size_t j = paren_idx; j < tokens.count; ++j) {
+                    if (token_is_symbol(&tokens.items[j], '(')) {
+                        depth++;
+                    } else if (token_is_symbol(&tokens.items[j], ')')) {
+                        depth--;
+                        if (depth == 0) {
+                            closing_idx = j;
+                            break;
+                        }
+                    }
+                }
+                if (!transpiler_copy_range(out, source, last_emit, tok->offset)) {
+                    ok = false;
+                    break;
+                }
+                size_t cluster_len = tok->length;
+                size_t thread_len = tokens.items[i + 2].length;
+                char cluster_name[64] = {0};
+                char thread_name[64] = {0};
+                if (cluster_len >= sizeof(cluster_name)) cluster_len = sizeof(cluster_name) - 1;
+                if (thread_len >= sizeof(thread_name)) thread_len = sizeof(thread_name) - 1;
+                memcpy(cluster_name, tok->lexeme, cluster_len);
+                memcpy(thread_name, tokens.items[i + 2].lexeme, thread_len);
+                size_t arg_start = tokens.items[paren_idx].offset + 1;
+                size_t arg_end = (closing_idx < tokens.count) ? tokens.items[closing_idx].offset : arg_start;
+                fprintf(out, "threads_thread_start(&%s, %s_%s_body, NULL, NULL, 0, &%s_%s_handle)",
+                        cluster_name, cluster_name, thread_name, cluster_name, thread_name);
+                last_emit = (closing_idx < tokens.count)
+                                ? tokens.items[closing_idx].offset + tokens.items[closing_idx].length
+                                : tokens.items[paren_idx].offset + 1;
+                i = (closing_idx < tokens.count) ? closing_idx : i + 5;
+                continue;
+            }
+        }
+        /* cluster.join_all() → threads_cluster_join_all(&cluster) */
+        if (tok->kind == TOKEN_IDENTIFIER && i + 3 < tokens.count) {
+            if (token_is_symbol(&tokens.items[i + 1], '.') &&
+                token_is_identifier(&tokens.items[i + 2], "join_all") &&
+                token_is_symbol(&tokens.items[i + 3], '(')) {
+                size_t paren_idx = i + 3;
+                int depth = 0;
+                size_t closing_idx = SIZE_MAX;
+                for (size_t j = paren_idx; j < tokens.count; ++j) {
+                    if (token_is_symbol(&tokens.items[j], '(')) {
+                        depth++;
+                    } else if (token_is_symbol(&tokens.items[j], ')')) {
+                        depth--;
+                        if (depth == 0) {
+                            closing_idx = j;
+                            break;
+                        }
+                    }
+                }
+                if (!transpiler_copy_range(out, source, last_emit, tok->offset)) {
+                    ok = false;
+                    break;
+                }
+                size_t cluster_len = tok->length;
+                char cluster_name[64] = {0};
+                if (cluster_len >= sizeof(cluster_name)) cluster_len = sizeof(cluster_name) - 1;
+                memcpy(cluster_name, tok->lexeme, cluster_len);
+                fprintf(out, "for (size_t _margo_t = 0; _margo_t < %s__handle_count; ++_margo_t) {\n",
+                        cluster_name);
+                fprintf(out, "    threads_thread_join(%s__handles[_margo_t]);\n",
+                        cluster_name);
+                fprintf(out, "}\n");
+                last_emit = (closing_idx < tokens.count)
+                                ? tokens.items[closing_idx].offset + tokens.items[closing_idx].length
+                                : tokens.items[paren_idx].offset + 1;
+                i = (closing_idx < tokens.count) ? closing_idx : i + 3;
+                continue;
+            }
+        }
+        if (token_is_identifier(tok, "switch")) {
+            size_t after_switch = tok->offset + tok->length;
+            while (after_switch < source_len && isspace((unsigned char)source[after_switch])) {
+                after_switch++;
+            }
+            if (after_switch >= source_len || source[after_switch] != '(') {
+                switch_header_t header;
+                if (!parser_parse_switch_header(source, &tokens, i, &header, diag)) {
+                    ok = false;
+                    break;
+                }
+                if (!transpiler_copy_range(out, source, last_emit, header.start_offset)) {
+                    diagnostic_set(diag, 0, "failed to copy prefix before switch");
+                    parser_free_switch_header(&header);
+                    ok = false;
+                    break;
+                }
+                if (fprintf(out, "switch (%s)", header.condition) < 0) {
+                    diagnostic_set(diag, 0, "failed to emit rewritten switch");
+                    parser_free_switch_header(&header);
+                    ok = false;
+                    break;
+                }
+                if (!transpiler_copy_range(out, source, header.condition_end_offset, header.body_offset)) {
+                    diagnostic_set(diag, 0, "failed to copy spacing after switch condition");
+                    parser_free_switch_header(&header);
+                    ok = false;
+                    break;
+                }
+                last_emit = header.body_offset;
+                i = header.next_index ? header.next_index - 1 : i;
+                parser_free_switch_header(&header);
+                continue;
+            }
+        }
+        if (token_is_identifier(tok, "type")) {
+            type_alias_t alias;
+            if (!parser_parse_type_alias(source, &tokens, i, &alias, diag)) {
+                ok = false;
+                break;
+            }
+            if (!transpiler_copy_range(out, source, last_emit, alias.start_offset)) {
+                diagnostic_set(diag, 0, "failed to copy prefix before type alias");
+                parser_free_type_alias(&alias);
+                ok = false;
+                break;
+            }
+            if (fprintf(out, "typedef %s %s;", alias.underlying, alias.alias) < 0) {
+                diagnostic_set(diag, 0, "failed to emit type alias");
+                parser_free_type_alias(&alias);
+                ok = false;
+                break;
+            }
+            last_emit = alias.end_offset;
+            i = alias.next_index ? alias.next_index - 1 : i;
+            parser_free_type_alias(&alias);
+            continue;
+        }
+        if (token_is_identifier(tok, "defer")) {
+            defer_stmt_t defer;
+            if (!parser_parse_defer_stmt(source, &tokens, i, &defer, diag)) {
+                ok = false;
+                break;
+            }
+            if (!transpiler_copy_range(out, source, last_emit, defer.start_offset)) {
+                diagnostic_set(diag, 0, "failed to copy prefix before defer");
+                parser_free_defer_stmt(&defer);
+                ok = false;
+                break;
+            }
+            /* Don't emit anything now; register in defer stack */
+            if (!defer_push(&defer_stack, defer.expression, brace_depth)) {
+                diagnostic_set(diag, 0, "out of memory while registering defer");
+                parser_free_defer_stmt(&defer);
+                ok = false;
+                break;
+            }
+            last_emit = defer.end_offset;
+            i = defer.next_index ? defer.next_index - 1 : i;
+            parser_free_defer_stmt(&defer);
             continue;
         }
         if (token_is_identifier(tok, "while")) {
@@ -3154,6 +3553,7 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
             raii_live_emit_return_frees(&raii_live,
                                         fn_body_depth, brace_depth,
                                         ret_ident, out);
+            defer_emit_return(&defer_stack, fn_body_depth, brace_depth, out);
             free(ret_ident);
             /* Fall through to emit `return` normally */
         }
@@ -3164,11 +3564,28 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
         }
 
         if (token_is_symbol(tok, '{')) {
+            size_t before_last_emit = last_emit;
             if (!style_handle_open_brace(&style_blocks, source, out, tok, &last_emit, diag)) {
                 ok = false;
                 break;
             }
+            if (last_emit == before_last_emit) {
+                /* Emit the brace itself if style_handle_open_brace didn't */
+                if (!transpiler_copy_range(out, source, last_emit, tok->offset + tok->length)) {
+                    diagnostic_set(diag, tok->line, "failed to copy '{'");
+                    ok = false;
+                    break;
+                }
+                last_emit = tok->offset + tok->length;
+            }
             brace_depth++;
+            if (pending_for_in_array) {
+                if (fprintf(out, " auto %s = %s[_margo_i]; ", pending_for_in_var, pending_for_in_iterable) < 0) {
+                    ok = false;
+                    break;
+                }
+                pending_for_in_array = false;
+            }
             /* Record depth of the first brace after any `fn` keyword so we
              * know where function scope begins for return-path RAII. */
             if (fn_body_depth == 0 && brace_depth > 0) {
@@ -3190,6 +3607,7 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
             }
             last_emit = tok->offset;
             raii_live_emit_scope_frees(&raii_live, brace_depth, out);
+            defer_emit_scope(&defer_stack, brace_depth, out);
 
             if (!style_handle_close_brace(&style_blocks, source, out, tok, &last_emit, brace_depth, diag)) {
                 ok = false;
@@ -3235,6 +3653,8 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
         }
     }
     raii_live_free(&raii_live);
+    defer_free(&defer_stack);
+    free(pending_for_in_iterable);
     style_stack_free(&style_blocks);
     lexer_free(&tokens);
     free(source);

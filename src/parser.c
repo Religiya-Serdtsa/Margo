@@ -212,6 +212,7 @@ static bool token_is_statement_leader(const token_t *tok) {
         "while",
         "do",
         "else",
+        "print",
     };
     for (size_t i = 0; i < sizeof(leaders) / sizeof(leaders[0]); ++i) {
         if (token_is_identifier(tok, leaders[i])) {
@@ -408,6 +409,21 @@ bool parser_parse_import(const char *source,
     } else if (strncmp(sanitized, "matrix/core", 11) == 0 && sanitized[11] == '\0') {
         kind = IMPORT_KIND_MATRIX_CORE;
         payload = "matrix/core";
+    } else if (strncmp(sanitized, "margo_std/vector", 16) == 0 && sanitized[16] == '\0') {
+        kind = IMPORT_KIND_MARGO_STD_VECTOR;
+        payload = "margo_std/vector";
+    } else if (strncmp(sanitized, "margo_std/hashmap", 17) == 0 && sanitized[17] == '\0') {
+        kind = IMPORT_KIND_MARGO_STD_HASHMAP;
+        payload = "margo_std/hashmap";
+    } else if (strncmp(sanitized, "margo_std/result", 16) == 0 && sanitized[16] == '\0') {
+        kind = IMPORT_KIND_MARGO_STD_RESULT;
+        payload = "margo_std/result";
+    } else if (strncmp(sanitized, "margo_std/optional", 18) == 0 && sanitized[18] == '\0') {
+        kind = IMPORT_KIND_MARGO_STD_OPTIONAL;
+        payload = "margo_std/optional";
+    } else if (strncmp(sanitized, "margo_std/string_builder", 24) == 0 && sanitized[24] == '\0') {
+        kind = IMPORT_KIND_MARGO_STD_STRING_BUILDER;
+        payload = "margo_std/string_builder";
     } else if (is_local_import_target(sanitized)) {
         kind = IMPORT_KIND_LOCAL;
         payload = sanitized;
@@ -475,6 +491,7 @@ bool parser_parse_for_header(const char *source,
     if (!tokens || start_index >= tokens->count) {
         return false;
     }
+    memset(out, 0, sizeof(*out));
     const token_t *kw = &tokens->items[start_index];
     if (!token_is_identifier(kw, "for")) {
         return false;
@@ -753,5 +770,546 @@ bool parser_parse_while_header(const char *source,
 
 void parser_free_while_header(while_header_t *header) {
     free_condition_header(header);
+}
+
+/* =========================================================================
+ * switch header (parenthesis-free like if/while)
+ * ====================================================================== */
+bool parser_parse_switch_header(const char *source,
+                                const token_buffer_t *tokens,
+                                size_t start_index,
+                                switch_header_t *out,
+                                diagnostic_t *diag) {
+    return parse_condition_header(source, tokens, start_index, "switch", out, diag);
+}
+
+void parser_free_switch_header(switch_header_t *header) {
+    free_condition_header(header);
+}
+
+/* =========================================================================
+ * for ... in header
+ * ====================================================================== */
+bool parser_parse_for_in_header(const char *source,
+                                const token_buffer_t *tokens,
+                                size_t start_index,
+                                for_in_header_t *out,
+                                diagnostic_t *diag) {
+    if (!tokens || start_index >= tokens->count) {
+        return false;
+    }
+    const token_t *kw = &tokens->items[start_index];
+    if (!token_is_identifier(kw, "for")) {
+        return false;
+    }
+    size_t idx = start_index + 1;
+    /* Skip newlines after 'for' */
+    while (idx < tokens->count && tokens->items[idx].kind == TOKEN_NEWLINE) {
+        idx++;
+    }
+    if (idx >= tokens->count || tokens->items[idx].kind != TOKEN_IDENTIFIER) {
+        diagnostic_set(diag, kw->line, "for-in is missing loop variable");
+        return false;
+    }
+    const token_t *loop_var_tok = &tokens->items[idx];
+    memset(out, 0, sizeof(*out));
+    size_t ident_len = loop_var_tok->length < sizeof(out->loop_var) - 1
+                           ? loop_var_tok->length
+                           : sizeof(out->loop_var) - 1;
+    memcpy(out->loop_var, loop_var_tok->lexeme, ident_len);
+    out->loop_var[ident_len] = '\0';
+    idx++;
+    /* Skip newlines */
+    while (idx < tokens->count && tokens->items[idx].kind == TOKEN_NEWLINE) {
+        idx++;
+    }
+    if (idx >= tokens->count || !token_is_identifier(&tokens->items[idx], "in")) {
+        diagnostic_set(diag, kw->line, "for-in is missing 'in' keyword");
+        return false;
+    }
+    idx++;
+    /* Skip newlines */
+    while (idx < tokens->count && tokens->items[idx].kind == TOKEN_NEWLINE) {
+        idx++;
+    }
+    if (idx >= tokens->count) {
+        diagnostic_set(diag, kw->line, "for-in is missing iterable or range");
+        return false;
+    }
+    /* Determine if explicit type annotation exists: "for int x in ..." */
+    /* We already consumed the identifier after 'for'. If there was a type,
+       it would have been before the loop var. We don't currently support
+       "for int x in ..." with a separate type token easily in this path
+       because the for-header detection in transpiler.c runs before we know
+       if it's a for-in or a regular for.  For simplicity we detect
+       "for TYPE ident in ..." by looking for an extra identifier before
+       the loop variable that looks like a type.  However the transpiler
+       currently calls parser_parse_for_header first for any 'for' without
+       a '('; if that fails, it could try for-in.  In practice we support
+       explicit type via the auto style or by writing the C for loop.
+    */
+    size_t expr_start = tokens->items[idx].offset;
+    size_t expr_idx = idx;
+    bool started = false;
+    size_t boundary_offset = SIZE_MAX;
+    size_t last_expr_index = idx;
+    while (idx < tokens->count) {
+        const token_t *tok = &tokens->items[idx];
+        if (tok->kind == TOKEN_EOF) {
+            break;
+        }
+        if (!started && tok->kind == TOKEN_NEWLINE) {
+            idx++;
+            continue;
+        }
+        if (tok->kind == TOKEN_NEWLINE) {
+            boundary_offset = tok->offset;
+            break;
+        }
+        if (token_is_symbol(tok, '{')) {
+            boundary_offset = tok->offset;
+            break;
+        }
+        if (token_is_statement_leader(tok)) {
+            boundary_offset = tok->offset;
+            break;
+        }
+        started = true;
+        last_expr_index = idx;
+        idx++;
+    }
+    if (!started) {
+        diagnostic_set(diag, kw->line, "for-in expression is empty");
+        return false;
+    }
+    if (boundary_offset == SIZE_MAX) {
+        const token_t *last_tok = &tokens->items[last_expr_index];
+        boundary_offset = last_tok->offset + last_tok->length;
+        idx = last_expr_index + 1;
+    }
+    size_t expr_end = boundary_offset;
+    /* Trim the expression */
+    while (expr_end > expr_start && is_space(source[expr_end - 1])) {
+        expr_end--;
+    }
+    size_t expr_start_trimmed = expr_start;
+    while (expr_start_trimmed < expr_end && is_space(source[expr_start_trimmed])) {
+        expr_start_trimmed++;
+    }
+    /* Check for range operator .. or ..= */
+    bool is_range = false;
+    bool inclusive = false;
+    size_t range_op_pos = 0;
+    for (size_t p = expr_start_trimmed; p + 2 < expr_end; ++p) {
+        if (source[p] == '.' && source[p + 1] == '.') {
+            if (p + 3 <= expr_end && source[p + 2] == '=') {
+                is_range = true;
+                inclusive = true;
+                range_op_pos = p;
+            } else {
+                is_range = true;
+                inclusive = false;
+                range_op_pos = p;
+            }
+            break;
+        }
+    }
+    if (is_range) {
+        out->kind = FOR_IN_KIND_RANGE;
+        out->range_inclusive = inclusive;
+        size_t start_end = range_op_pos;
+        while (start_end > expr_start_trimmed && is_space(source[start_end - 1])) {
+            start_end--;
+        }
+        size_t start_begin = expr_start_trimmed;
+        out->range_start = copy_range(source, start_begin, start_end);
+        size_t range_op_len = inclusive ? 3 : 2;
+        size_t end_begin = range_op_pos + range_op_len;
+        while (end_begin < expr_end && is_space(source[end_begin])) {
+            end_begin++;
+        }
+        out->range_end = copy_range(source, end_begin, expr_end);
+    } else {
+        out->kind = FOR_IN_KIND_ARRAY;
+        out->iterable = copy_range(source, expr_start_trimmed, expr_end);
+    }
+    if (!out->range_start && out->kind == FOR_IN_KIND_RANGE) {
+        diagnostic_set(diag, kw->line, "out of memory while parsing for-in range");
+        parser_free_for_in_header(out);
+        return false;
+    }
+    if (!out->iterable && out->kind == FOR_IN_KIND_ARRAY) {
+        diagnostic_set(diag, kw->line, "out of memory while parsing for-in iterable");
+        parser_free_for_in_header(out);
+        return false;
+    }
+    out->start_offset = kw->offset;
+    out->block_offset = boundary_offset;
+    out->next_index = idx;
+    /* trailing whitespace */
+    size_t last_trimmed = expr_end;
+    while (last_trimmed < boundary_offset && is_space(source[last_trimmed])) {
+        last_trimmed++;
+    }
+    out->trailing_ws = copy_range(source, last_trimmed, boundary_offset);
+    if (!out->trailing_ws) {
+        out->trailing_ws = dup_string(" ");
+    }
+    return true;
+}
+
+void parser_free_for_in_header(for_in_header_t *header) {
+    if (!header) {
+        return;
+    }
+    free(header->range_start);
+    free(header->range_end);
+    free(header->iterable);
+    free(header->trailing_ws);
+    memset(header, 0, sizeof(*header));
+}
+
+/* =========================================================================
+ * type alias
+ * ====================================================================== */
+bool parser_parse_type_alias(const char *source,
+                             const token_buffer_t *tokens,
+                             size_t start_index,
+                             type_alias_t *out,
+                             diagnostic_t *diag) {
+    if (!tokens || start_index >= tokens->count) {
+        return false;
+    }
+    const token_t *kw = &tokens->items[start_index];
+    if (!token_is_identifier(kw, "type")) {
+        return false;
+    }
+    size_t idx = start_index + 1;
+    while (idx < tokens->count && tokens->items[idx].kind == TOKEN_NEWLINE) {
+        idx++;
+    }
+    if (idx >= tokens->count || tokens->items[idx].kind != TOKEN_IDENTIFIER) {
+        diagnostic_set(diag, kw->line, "type alias is missing a name");
+        return false;
+    }
+    const token_t *name_tok = &tokens->items[idx];
+    memset(out, 0, sizeof(*out));
+    size_t name_len = name_tok->length < sizeof(out->alias) - 1
+                          ? name_tok->length
+                          : sizeof(out->alias) - 1;
+    memcpy(out->alias, name_tok->lexeme, name_len);
+    out->alias[name_len] = '\0';
+    idx++;
+    while (idx < tokens->count && tokens->items[idx].kind == TOKEN_NEWLINE) {
+        idx++;
+    }
+    /* Support both `type name = underlying;` and `type name underlying;` */
+    bool has_equals = false;
+    if (idx < tokens->count && token_is_symbol(&tokens->items[idx], '=')) {
+        has_equals = true;
+        idx++;
+        while (idx < tokens->count && tokens->items[idx].kind == TOKEN_NEWLINE) {
+            idx++;
+        }
+    }
+    if (idx >= tokens->count) {
+        diagnostic_set(diag, kw->line, "type alias is missing underlying type");
+        return false;
+    }
+    size_t type_start = tokens->items[idx].offset;
+    size_t type_idx = idx;
+    size_t last_type_idx = idx;
+    bool started = false;
+    size_t boundary_offset = SIZE_MAX;
+    while (idx < tokens->count) {
+        const token_t *tok = &tokens->items[idx];
+        if (tok->kind == TOKEN_EOF) {
+            break;
+        }
+        if (!started && tok->kind == TOKEN_NEWLINE) {
+            idx++;
+            continue;
+        }
+        if (tok->kind == TOKEN_NEWLINE) {
+            boundary_offset = tok->offset;
+            break;
+        }
+        if (token_is_statement_leader(tok)) {
+            boundary_offset = tok->offset;
+            break;
+        }
+        started = true;
+        last_type_idx = idx;
+        idx++;
+    }
+    if (!started) {
+        diagnostic_set(diag, kw->line, "type alias underlying type is empty");
+        return false;
+    }
+    if (boundary_offset == SIZE_MAX) {
+        const token_t *last_tok = &tokens->items[last_type_idx];
+        boundary_offset = last_tok->offset + last_tok->length;
+        idx = last_type_idx + 1;
+    }
+    size_t type_end = boundary_offset;
+    while (type_end > type_start && is_space(source[type_end - 1])) {
+        type_end--;
+    }
+    size_t type_start_trimmed = type_start;
+    while (type_start_trimmed < type_end && is_space(source[type_start_trimmed])) {
+        type_start_trimmed++;
+    }
+    out->underlying = copy_range(source, type_start_trimmed, type_end);
+    if (!out->underlying) {
+        diagnostic_set(diag, kw->line, "out of memory while parsing type alias");
+        return false;
+    }
+    out->start_offset = kw->offset;
+    out->end_offset = boundary_offset;
+    out->next_index = idx;
+    (void)has_equals;
+    return true;
+}
+
+void parser_free_type_alias(type_alias_t *alias) {
+    if (!alias) {
+        return;
+    }
+    free(alias->underlying);
+    alias->underlying = NULL;
+}
+
+/* =========================================================================
+ * defer statement
+ * ====================================================================== */
+bool parser_parse_defer_stmt(const char *source,
+                             const token_buffer_t *tokens,
+                             size_t start_index,
+                             defer_stmt_t *out,
+                             diagnostic_t *diag) {
+    if (!tokens || start_index >= tokens->count) {
+        return false;
+    }
+    const token_t *kw = &tokens->items[start_index];
+    if (!token_is_identifier(kw, "defer")) {
+        return false;
+    }
+    size_t idx = start_index + 1;
+    while (idx < tokens->count && tokens->items[idx].kind == TOKEN_NEWLINE) {
+        idx++;
+    }
+    if (idx >= tokens->count) {
+        diagnostic_set(diag, kw->line, "defer is missing an expression");
+        return false;
+    }
+    size_t expr_start = tokens->items[idx].offset;
+    size_t last_expr_idx = idx;
+    bool started = false;
+    size_t boundary_offset = SIZE_MAX;
+    while (idx < tokens->count) {
+        const token_t *tok = &tokens->items[idx];
+        if (tok->kind == TOKEN_EOF) {
+            break;
+        }
+        if (!started && tok->kind == TOKEN_NEWLINE) {
+            idx++;
+            continue;
+        }
+        if (tok->kind == TOKEN_NEWLINE) {
+            boundary_offset = tok->offset;
+            break;
+        }
+        if (token_is_symbol(tok, ';')) {
+            boundary_offset = tok->offset;
+            last_expr_idx = idx;
+            idx++;
+            break;
+        }
+        if (token_is_statement_leader(tok)) {
+            boundary_offset = tok->offset;
+            break;
+        }
+        started = true;
+        last_expr_idx = idx;
+        idx++;
+    }
+    if (!started) {
+        diagnostic_set(diag, kw->line, "defer expression is empty");
+        return false;
+    }
+    if (boundary_offset == SIZE_MAX) {
+        const token_t *last_tok = &tokens->items[last_expr_idx];
+        boundary_offset = last_tok->offset + last_tok->length;
+        idx = last_expr_idx + 1;
+    }
+    size_t expr_end = boundary_offset;
+    while (expr_end > expr_start && is_space(source[expr_end - 1])) {
+        expr_end--;
+    }
+    size_t expr_start_trimmed = expr_start;
+    while (expr_start_trimmed < expr_end && is_space(source[expr_start_trimmed])) {
+        expr_start_trimmed++;
+    }
+    memset(out, 0, sizeof(*out));
+    out->expression = copy_range(source, expr_start_trimmed, expr_end);
+    if (!out->expression) {
+        diagnostic_set(diag, kw->line, "out of memory while parsing defer");
+        return false;
+    }
+    out->start_offset = kw->offset;
+    out->end_offset = boundary_offset;
+    out->next_index = idx;
+    return true;
+}
+
+void parser_free_defer_stmt(defer_stmt_t *defer) {
+    if (!defer) {
+        return;
+    }
+    free(defer->expression);
+    defer->expression = NULL;
+}
+
+/* =========================================================================
+ * threads block parser
+ * ====================================================================== */
+
+static bool thread_def_list_append(threads_block_t *block, const thread_def_t *def) {
+    if (block->thread_count == block->thread_capacity) {
+        size_t new_cap = block->thread_capacity ? block->thread_capacity * 2 : 4;
+        thread_def_t *new_items = realloc(block->threads, new_cap * sizeof(thread_def_t));
+        if (!new_items) {
+            return false;
+        }
+        block->threads = new_items;
+        block->thread_capacity = new_cap;
+    }
+    block->threads[block->thread_count++] = *def;
+    return true;
+}
+
+bool parser_parse_threads_block(const char *source,
+                                const token_buffer_t *tokens,
+                                size_t start_index,
+                                threads_block_t *out,
+                                diagnostic_t *diag) {
+    if (!tokens || start_index >= tokens->count) {
+        return false;
+    }
+    memset(out, 0, sizeof(*out));
+    const token_t *kw = &tokens->items[start_index];
+    if (!token_is_identifier(kw, "threads")) {
+        return false;
+    }
+    size_t idx = start_index + 1;
+    while (idx < tokens->count && tokens->items[idx].kind == TOKEN_NEWLINE) {
+        idx++;
+    }
+    if (idx >= tokens->count || tokens->items[idx].kind != TOKEN_IDENTIFIER) {
+        diagnostic_set(diag, kw->line, "threads block is missing a cluster name");
+        return false;
+    }
+    const token_t *name_tok = &tokens->items[idx];
+    size_t name_len = name_tok->length < sizeof(out->cluster_name) - 1
+                          ? name_tok->length
+                          : sizeof(out->cluster_name) - 1;
+    memcpy(out->cluster_name, name_tok->lexeme, name_len);
+    out->cluster_name[name_len] = '\0';
+    idx++;
+    while (idx < tokens->count && tokens->items[idx].kind == TOKEN_NEWLINE) {
+        idx++;
+    }
+    if (idx >= tokens->count || !token_is_symbol(&tokens->items[idx], '{')) {
+        diagnostic_set(diag, kw->line, "threads block is missing '{'");
+        return false;
+    }
+    size_t block_open_idx = idx;
+    idx++;
+    int brace_depth = 1;
+    while (idx < tokens->count && brace_depth > 0) {
+        const token_t *tok = &tokens->items[idx];
+        if (tok->kind == TOKEN_EOF) {
+            break;
+        }
+        if (token_is_symbol(tok, '{')) {
+            brace_depth++;
+            idx++;
+            continue;
+        }
+        if (token_is_symbol(tok, '}')) {
+            brace_depth--;
+            if (brace_depth == 0) {
+                break;
+            }
+            idx++;
+            continue;
+        }
+        /* Look for thread definitions at depth 1 */
+        if (brace_depth == 1 && tok->kind == TOKEN_IDENTIFIER) {
+            size_t next = idx + 1;
+            while (next < tokens->count && tokens->items[next].kind == TOKEN_NEWLINE) {
+                next++;
+            }
+            if (next < tokens->count && token_is_symbol(&tokens->items[next], '{')) {
+                thread_def_t def = {0};
+                size_t tlen = tok->length < sizeof(def.name) - 1 ? tok->length : sizeof(def.name) - 1;
+                memcpy(def.name, tok->lexeme, tlen);
+                def.name[tlen] = '\0';
+                def.body_start_offset = tokens->items[next].offset;
+                /* Find matching '}' */
+                size_t inner_idx = next + 1;
+                int inner_depth = 1;
+                while (inner_idx < tokens->count && inner_depth > 0) {
+                    const token_t *inner = &tokens->items[inner_idx];
+                    if (inner->kind == TOKEN_EOF) {
+                        break;
+                    }
+                    if (token_is_symbol(inner, '{')) {
+                        inner_depth++;
+                    } else if (token_is_symbol(inner, '}')) {
+                        inner_depth--;
+                        if (inner_depth == 0) {
+                            def.body_end_offset = inner->offset + inner->length;
+                            break;
+                        }
+                    }
+                    inner_idx++;
+                }
+                if (inner_depth != 0) {
+                    diagnostic_set(diag, tok->line, "unterminated thread body '%s'", def.name);
+                    parser_free_threads_block(out);
+                    return false;
+                }
+                if (!thread_def_list_append(out, &def)) {
+                    diagnostic_set(diag, tok->line, "out of memory while parsing threads block");
+                    parser_free_threads_block(out);
+                    return false;
+                }
+                idx = inner_idx + 1;
+                continue;
+            }
+        }
+        idx++;
+    }
+    if (brace_depth != 0) {
+        diagnostic_set(diag, kw->line, "unterminated threads block");
+        parser_free_threads_block(out);
+        return false;
+    }
+    out->start_offset = kw->offset;
+    out->end_offset = tokens->items[idx].offset + tokens->items[idx].length;
+    out->next_index = idx + 1;
+    (void)source;
+    return true;
+}
+
+void parser_free_threads_block(threads_block_t *block) {
+    if (!block) {
+        return;
+    }
+    free(block->threads);
+    block->threads = NULL;
+    block->thread_count = 0;
+    block->thread_capacity = 0;
 }
 #include <ctype.h>

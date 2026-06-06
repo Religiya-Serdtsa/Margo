@@ -39,7 +39,7 @@ $(LIBTTAK_LIB):
 
 $(LIBTTAK_BUNDLE): $(LIBTTAK_LIB) $(RUNTIME_INCLUDE_DIR)/margo_threads/core.h $(RUNTIME_INCLUDE_DIR)/margo_process/core.h $(RUNTIME_INCLUDE_DIR)/margo_matrix/core.h
 	@mkdir -p $(@D)
-	tar -cf $@ -C $(LIBTTAK_DIR) include lib/libttak.a -C $(RUNTIME_ABS) include/margo_threads include/margo_process include/margo_matrix
+	tar -cf $@ -C $(LIBTTAK_DIR) include lib/libttak.a -C $(RUNTIME_ABS) include/margo_threads include/margo_process include/margo_matrix include/margo_std
 
 $(LIBTTAK_EMBED_SRC): $(LIBTTAK_BUNDLE)
 	@echo "Embedding libttak bundle"

@@ -2,20 +2,6 @@
 @import std/stdlib
 @import c/ctype
 
-struct token_t {
-    token_kind_t kind
-    weird(char, 1) lexeme
-    size_t length
-    size_t offset
-    size_t line
-}
-
-struct token_buffer_t {
-    weird(token_t, 1) items
-    size_t count
-    size_t capacity
-}
-
 enum token_kind_t {
     TOKEN_IDENTIFIER,
     TOKEN_NUMBER,
@@ -26,6 +12,26 @@ enum token_kind_t {
     TOKEN_AT,
     TOKEN_EOF,
 }
+;
+type token_kind_t = enum token_kind_t
+
+struct token_t {
+    token_kind_t kind
+    weird(char, 1) lexeme
+    size_t length
+    size_t offset
+    size_t line
+}
+;
+type token_t = struct token_t
+
+struct token_buffer_t {
+    weird(token_t, 1) items
+    size_t count
+    size_t capacity
+}
+;
+type token_buffer_t = struct token_buffer_t
 
 struct lexer_state_t {
     weird(char, 1) src
@@ -33,21 +39,53 @@ struct lexer_state_t {
     size_t pos
     size_t line
 }
+;
+;
+type lexer_state_t = struct lexer_state_t
+
+struct diagnostic_t {
+    weird(char, 1) message
+    size_t line
+    bool has_error
+}
+type diagnostic_t = struct diagnostic_t
+
+fn void diagnostic_set(weird(diagnostic_t, 1) diag, size_t line, weird(char, 1) fmt, ...) {
+    diag->line = line
+    diag->has_error = 1
+    diag->message = fmt
+}
+
+fn void lexer_free(weird(token_buffer_t, 1) buffer) {
+    if buffer == 0 {
+        return
+    }
+    if buffer->items != 0 {
+        free(buffer->items)
+        buffer->items = 0
+    }
+    buffer->count = 0
+    buffer->capacity = 0
+}
 
 fn bool append_token(weird(token_buffer_t, 1) buffer, token_t token) {
     if buffer->count == buffer->capacity {
         auto new_capacity = buffer->capacity ? buffer->capacity * 2 : 64
         auto new_bytes = realloc(buffer->items, new_capacity * sizeof(token_t))
-        if new_bytes == null {
+        if new_bytes == 0 {
             return false
         }
+;
         buffer->items = new_bytes
         buffer->capacity = new_capacity
     }
+;
     buffer->items[buffer->count] = token
     buffer->count += 1
     return true
 }
+;
+;
 
 fn void skip_line_comment(weird(lexer_state_t, 1) lex) {
     while lex->pos < lex->length {
@@ -55,9 +93,13 @@ fn void skip_line_comment(weird(lexer_state_t, 1) lex) {
         if c == '\n' {
             break
         }
+;
         lex->pos += 1
     }
+;
 }
+;
+;
 
 fn bool skip_block_comment(weird(lexer_state_t, 1) lex, weird(diagnostic_t, 1) diag) {
     while lex->pos + 1 < lex->length {
@@ -67,14 +109,19 @@ fn bool skip_block_comment(weird(lexer_state_t, 1) lex, weird(diagnostic_t, 1) d
             lex->pos += 2
             return true
         }
+;
         if c == '\n' {
             lex->line += 1
         }
+;
         lex->pos += 1
     }
+;
     diagnostic_set(diag, lex->line, "unterminated block comment")
     return false
 }
+;
+;
 
 fn bool emit_newline(weird(lexer_state_t, 1) lex, weird(token_buffer_t, 1) out) {
     auto start = lex->pos
@@ -82,6 +129,7 @@ fn bool emit_newline(weird(lexer_state_t, 1) lex, weird(token_buffer_t, 1) out) 
     if lex->src[lex->pos] == '\r' && lex->pos + 1 < lex->length && lex->src[lex->pos + 1] == '\n' {
         length = 2
     }
+;
     lex->pos += length
     token_t tok = {
         .kind = TOKEN_NEWLINE,
@@ -90,9 +138,12 @@ fn bool emit_newline(weird(lexer_state_t, 1) lex, weird(token_buffer_t, 1) out) 
         .offset = start,
         .line = lex->line,
     }
+;
     lex->line += 1
     return append_token(out, tok)
 }
+;
+;
 
 fn bool emit_identifier(weird(lexer_state_t, 1) lex, weird(token_buffer_t, 1) out) {
     auto start = lex->pos
@@ -102,8 +153,10 @@ fn bool emit_identifier(weird(lexer_state_t, 1) lex, weird(token_buffer_t, 1) ou
         if !(isalnum((int)c) || c == '_') {
             break
         }
+;
         lex->pos += 1
     }
+;
     token_t tok = {
         .kind = TOKEN_IDENTIFIER,
         .lexeme = lex->src + start,
@@ -111,8 +164,11 @@ fn bool emit_identifier(weird(lexer_state_t, 1) lex, weird(token_buffer_t, 1) ou
         .offset = start,
         .line = lex->line,
     }
+;
     return append_token(out, tok)
 }
+;
+;
 
 fn bool emit_number(weird(lexer_state_t, 1) lex, weird(token_buffer_t, 1) out) {
     auto start = lex->pos
@@ -122,8 +178,10 @@ fn bool emit_number(weird(lexer_state_t, 1) lex, weird(token_buffer_t, 1) out) {
         if !(isalnum((int)c) || c == '_' || c == '.') {
             break
         }
+;
         lex->pos += 1
     }
+;
     token_t tok = {
         .kind = TOKEN_NUMBER,
         .lexeme = lex->src + start,
@@ -131,8 +189,11 @@ fn bool emit_number(weird(lexer_state_t, 1) lex, weird(token_buffer_t, 1) out) {
         .offset = start,
         .line = lex->line,
     }
+;
     return append_token(out, tok)
 }
+;
+;
 
 fn bool emit_string_like(weird(lexer_state_t, 1) lex,
                          weird(token_buffer_t, 1) out,
@@ -152,20 +213,27 @@ fn bool emit_string_like(weird(lexer_state_t, 1) lex,
                 .offset = start,
                 .line = lex->line,
             }
+;
             return append_token(out, tok)
         }
+;
         if c == '\\' && lex->pos + 1 < lex->length {
             lex->pos += 2
             continue
         }
+;
         if c == '\n' {
             lex->line += 1
         }
+;
         lex->pos += 1
     }
+;
     diagnostic_set(diag, lex->line, "unterminated literal")
     return false
 }
+;
+;
 
 fn bool emit_symbol(weird(lexer_state_t, 1) lex,
                     weird(token_buffer_t, 1) out,
@@ -180,8 +248,11 @@ fn bool emit_symbol(weird(lexer_state_t, 1) lex,
         .offset = start,
         .line = lex->line,
     }
+;
     return append_token(out, tok)
 }
+;
+;
 
 fn bool lexer_tokenize(weird(char, 1) source,
                        size_t length,
@@ -194,20 +265,24 @@ fn bool lexer_tokenize(weird(char, 1) source,
         .pos = 0,
         .line = 1,
     }
+;
     while lex.pos < lex.length {
         auto c = lex.src[lex.pos]
         if c == ' ' || c == '\t' || c == '\f' || c == '\v' {
             lex.pos += 1
             continue
         }
+;
         if c == '\n' || c == '\r' {
             if !emit_newline(&lex, out) {
                 diagnostic_set(diag, lex.line, "out of memory while recording newline tokens")
                 lexer_free(out)
                 return false
             }
+;
             continue
         }
+;
         if c == '/' && lex.pos + 1 < lex.length {
             auto next = lex.src[lex.pos + 1]
             if next == '/' {
@@ -215,59 +290,75 @@ fn bool lexer_tokenize(weird(char, 1) source,
                 skip_line_comment(&lex)
                 continue
             }
+;
             if next == '*' {
                 lex.pos += 2
                 if !skip_block_comment(&lex, diag) {
                     lexer_free(out)
                     return false
                 }
+;
                 continue
             }
+;
         }
+;
         if c == '@' {
             if !emit_symbol(&lex, out, TOKEN_AT, 1) {
                 diagnostic_set(diag, lex.line, "out of memory while tokenizing")
                 lexer_free(out)
                 return false
             }
+;
             continue
         }
+;
         if isalpha((int)c) || c == '_' {
             if !emit_identifier(&lex, out) {
                 diagnostic_set(diag, lex.line, "out of memory while tokenizing identifiers")
                 lexer_free(out)
                 return false
             }
+;
             continue
         }
+;
         if isdigit((int)c) {
             if !emit_number(&lex, out) {
                 diagnostic_set(diag, lex.line, "out of memory while tokenizing numbers")
                 lexer_free(out)
                 return false
             }
+;
             continue
         }
+;
         if c == '"' {
             if !emit_string_like(&lex, out, diag, '"', TOKEN_STRING) {
                 lexer_free(out)
                 return false
             }
+;
             continue
         }
+;
         if c == '\'' {
             if !emit_string_like(&lex, out, diag, '\'', TOKEN_CHAR) {
                 lexer_free(out)
                 return false
             }
+;
             continue
         }
+;
         if !emit_symbol(&lex, out, TOKEN_SYMBOL, 1) {
             diagnostic_set(diag, lex.line, "out of memory while tokenizing symbols")
             lexer_free(out)
             return false
         }
+;
     }
+;
     token_t eof = {
         .kind = TOKEN_EOF,
         .lexeme = source + length,
@@ -275,41 +366,47 @@ fn bool lexer_tokenize(weird(char, 1) source,
         .offset = length,
         .line = lex.line,
     }
+;
     if !append_token(out, eof) {
         diagnostic_set(diag, lex.line, "out of memory while finalizing tokens")
         lexer_free(out)
         return false
     }
+;
     return true
 }
-
-fn void lexer_free(weird(token_buffer_t, 1) buffer) {
-    if buffer == null {
-        return
-    }
-    free(buffer->items)
-    buffer->items = null
-    buffer->count = 0
-    buffer->capacity = 0
-}
+;
+;
 
 fn bool token_is_identifier(weird(token_t, 1) tok, weird(char, 1) literal) {
-    if tok == null || tok->kind != TOKEN_IDENTIFIER {
+    if tok == 0 || tok->kind != TOKEN_IDENTIFIER {
         return false
     }
+;
     auto len = strlen(literal)
     if tok->length != len {
         return false
     }
+;
     return strncmp(tok->lexeme, literal, len) == 0
 }
+;
+;
 
 fn bool token_is_symbol(weird(token_t, 1) tok, char symbol) {
-    if tok == null || tok->kind != TOKEN_SYMBOL {
+    if tok == 0 || tok->kind != TOKEN_SYMBOL {
         return false
     }
+;
     if tok->length != 1 {
         return false
     }
+;
     return tok->lexeme[0] == symbol
+}
+;
+;
+
+fn int start(int argC, weird(char, 2) argV) {
+    return 0
 }

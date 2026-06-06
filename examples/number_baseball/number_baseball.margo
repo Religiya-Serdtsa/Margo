@@ -73,7 +73,8 @@ fn int start(int argC, weird(char, 2) argV) {
         auto valid_input = 0
         while !valid_input {
             print("Guess", attempts + 1, ">", endl = " ")
-            if ScanLine(line) <= 0 {
+            auto n = ScanLine(line)
+            if n <= 0 {
                 print("입력을 읽지 못했습니다. 종료합니다.")
                 return 1
             }

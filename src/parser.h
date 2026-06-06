@@ -51,6 +51,11 @@ typedef enum {
     IMPORT_KIND_THREADS_CORE,
     IMPORT_KIND_PROCESS_CORE,
     IMPORT_KIND_MATRIX_CORE,
+    IMPORT_KIND_MARGO_STD_VECTOR,
+    IMPORT_KIND_MARGO_STD_HASHMAP,
+    IMPORT_KIND_MARGO_STD_RESULT,
+    IMPORT_KIND_MARGO_STD_OPTIONAL,
+    IMPORT_KIND_MARGO_STD_STRING_BUILDER,
     IMPORT_KIND_LOCAL,
 } import_kind_t;
 
@@ -95,6 +100,73 @@ typedef struct {
 
 typedef condition_header_t if_header_t;
 typedef condition_header_t while_header_t;
+typedef condition_header_t switch_header_t;
+
+/**
+ * @brief Parsed representation of a `for ... in` loop header.
+ */
+typedef enum {
+    FOR_IN_KIND_RANGE,
+    FOR_IN_KIND_ARRAY,
+} for_in_kind_t;
+
+typedef struct {
+    for_in_kind_t kind;
+    char loop_var[64];
+    bool has_explicit_type;
+    char explicit_type[64];
+    char *range_start;
+    char *range_end;
+    bool range_inclusive;
+    char *iterable;
+    char *trailing_ws;
+    size_t start_offset;
+    size_t block_offset;
+    size_t next_index;
+} for_in_header_t;
+
+/**
+ * @brief Parsed representation of a `type` alias declaration.
+ */
+typedef struct {
+    char alias[64];
+    char *underlying;
+    size_t start_offset;
+    size_t end_offset;
+    size_t next_index;
+} type_alias_t;
+
+/**
+ * @brief Parsed representation of a `defer` statement.
+ */
+typedef struct {
+    char *expression;
+    size_t start_offset;
+    size_t end_offset;
+    size_t next_index;
+} defer_stmt_t;
+
+/**
+ * @brief One thread definition inside a `threads` block.
+ */
+typedef struct {
+    char name[64];
+    size_t body_start_offset; /**< offset of '{' */
+    size_t body_end_offset;   /**< offset of '}' */
+} thread_def_t;
+
+/**
+ * @brief Parsed representation of a `threads` block.
+ */
+typedef struct {
+    char cluster_name[64];
+    thread_def_t *threads;
+    size_t thread_count;
+    size_t thread_capacity;
+    size_t start_offset;
+    size_t end_offset;
+    size_t next_index;
+} threads_block_t;
 
 bool parser_parse_import(const char *source,
                          const token_buffer_t *tokens,
@@ -123,3 +195,38 @@ bool parser_parse_while_header(const char *source,
                                while_header_t *out,
                                diagnostic_t *diag);
 void parser_free_while_header(while_header_t *header);
+
+bool parser_parse_switch_header(const char *source,
+                                const token_buffer_t *tokens,
+                                size_t start_index,
+                                switch_header_t *out,
+                                diagnostic_t *diag);
+void parser_free_switch_header(switch_header_t *header);
+
+bool parser_parse_for_in_header(const char *source,
+                                const token_buffer_t *tokens,
+                                size_t start_index,
+                                for_in_header_t *out,
+                                diagnostic_t *diag);
+void parser_free_for_in_header(for_in_header_t *header);
+
+bool parser_parse_type_alias(const char *source,
+                             const token_buffer_t *tokens,
+                             size_t start_index,
+                             type_alias_t *out,
+                             diagnostic_t *diag);
+void parser_free_type_alias(type_alias_t *alias);
+
+bool parser_parse_defer_stmt(const char *source,
+                             const token_buffer_t *tokens,
+                             size_t start_index,
+                             defer_stmt_t *out,
+                             diagnostic_t *diag);
+void parser_free_defer_stmt(defer_stmt_t *defer);
+
+bool parser_parse_threads_block(const char *source,
+                                const token_buffer_t *tokens,
+                                size_t start_index,
+                                threads_block_t *out,
+                                diagnostic_t *diag);
+void parser_free_threads_block(threads_block_t *block);
