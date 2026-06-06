@@ -1,0 +1,60 @@
+@import std/io
+@import matrix/core
+
+fn void print_matrix(auto_matrix m, string name) {
+    print(name, ":")
+    for r = 0; <matrix_rows(m); ++ {
+        for c = 0; <matrix_cols(m); ++ {
+            print(matrix_get(m, r, c), endl = " ")
+        }
+        print("")
+    }
+}
+
+fn void gaussian_eliminate(auto_matrix aug, size_t n) {
+    for i = 0; <n; ++ {
+        auto pivot = matrix_get(aug, i, i)
+        if pivot == 0.0 {
+            continue
+        }
+        for j = i; <n + 1; ++ {
+            matrix_set(aug, i, j, matrix_get(aug, i, j) / pivot)
+        }
+        for k = i + 1; <n; ++ {
+            auto factor = matrix_get(aug, k, i)
+            for j = i; <n + 1; ++ {
+                auto val = matrix_get(aug, k, j) - factor * matrix_get(aug, i, j)
+                matrix_set(aug, k, j, val)
+            }
+        }
+    }
+}
+
+fn void back_substitute(auto_matrix aug, size_t n, auto_matrix x) {
+    for i = n; >0; -- {
+        auto idx = i - 1
+        auto sum = matrix_get(aug, idx, n)
+        for j = idx + 1; <n; ++ {
+            sum -= matrix_get(aug, idx, j) * matrix_get(x, j, 0)
+        }
+        matrix_set(x, idx, 0, sum / matrix_get(aug, idx, idx))
+    }
+}
+
+fn int start(int argC, weird(char, 2) argV) {
+    // 3x3 system with RHS column -> augmented 3x4 matrix
+    auto aug = matrix_alloc(3, 4)
+    matrix_set(aug, 0, 0, 2.0)  ; matrix_set(aug, 0, 1, 1.0)  ; matrix_set(aug, 0, 2, -1.0) ; matrix_set(aug, 0, 3, 8.0)
+    matrix_set(aug, 1, 0, -3.0) ; matrix_set(aug, 1, 1, -1.0) ; matrix_set(aug, 1, 2, 2.0)  ; matrix_set(aug, 1, 3, -11.0)
+    matrix_set(aug, 2, 0, -2.0) ; matrix_set(aug, 2, 1, 1.0)  ; matrix_set(aug, 2, 2, 2.0)  ; matrix_set(aug, 2, 3, -3.0)
+
+    auto x = matrix_alloc(3, 1)
+
+    print_matrix(aug, "Augmented matrix [A|b]")
+    gaussian_eliminate(aug, 3)
+    print_matrix(aug, "After Gaussian elimination")
+    back_substitute(aug, 3, x)
+    print_matrix(x, "Solution x")
+
+    return 0
+}

@@ -1,0 +1,57 @@
+@import std/io
+@import matrix/core
+
+fn void print_matrix(auto_matrix m, string name) {
+    print(name, ":")
+    for r = 0; <matrix_rows(m); ++ {
+        for c = 0; <matrix_cols(m); ++ {
+            print(matrix_get(m, r, c), endl = " ")
+        }
+        print("")
+    }
+}
+
+fn auto_matrix convolve(auto_matrix src, double kernel[3][3]) {
+    auto rows = matrix_rows(src)
+    auto cols = matrix_cols(src)
+    auto out = matrix_fill(rows, cols, 0.0)
+    for r = 0; <rows; ++ {
+        for c = 0; <cols; ++ {
+            auto sum = 0.0
+            for kr = 0; <3; ++ {
+                for kc = 0; <3; ++ {
+                    auto sr = r + kr - 1
+                    auto sc = c + kc - 1
+                    if sr >= 0 && sr < rows && sc >= 0 && sc < cols {
+                        sum += matrix_get(src, sr, sc) * kernel[kr][kc]
+                    }
+                }
+            }
+            matrix_set(out, r, c, sum)
+        }
+    }
+    return out
+}
+
+fn int start(int argC, weird(char, 2) argV) {
+    auto img = matrix_alloc(5, 5)
+    // fill with a simple gradient pattern
+    for r = 0; <5; ++ {
+        for c = 0; <5; ++ {
+            matrix_set(img, r, c, (double)(r * 5 + c))
+        }
+    }
+
+    double sobel_x[3][3] = {
+        {-1, 0, 1},
+        {-2, 0, 2},
+        {-1, 0, 1},
+    };
+
+    auto edge = convolve(img, sobel_x)
+
+    print_matrix(img,  "Original 5x5 gradient")
+    print_matrix(edge, "Sobel-X edge response")
+
+    return 0
+}

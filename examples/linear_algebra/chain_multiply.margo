@@ -1,0 +1,31 @@
+@import std/io
+@import matrix/core
+
+fn void print_matrix(auto_matrix m, string name) {
+    print(name, ":")
+    for r = 0; <matrix_rows(m); ++ {
+        for c = 0; <matrix_cols(m); ++ {
+            print(matrix_get(m, r, c), endl = " ")
+        }
+        print("")
+    }
+}
+
+fn int start(int argC, weird(char, 2) argV) {
+    auto A = matrix_fill(2, 3, 1.0)
+    auto B = matrix_fill(3, 4, 2.0)
+    auto C = matrix_fill(4, 2, 3.0)
+
+    auto AB   = matrix_mul(A, B)
+    auto ABC  = matrix_mul(AB, C)
+    auto T    = matrix_transpose(ABC)
+
+    print_matrix(A,   "A (2x3, filled with 1)")
+    print_matrix(B,   "B (3x4, filled with 2)")
+    print_matrix(C,   "C (4x2, filled with 3)")
+    print_matrix(AB,  "A * B")
+    print_matrix(ABC, "(A * B) * C")
+    print_matrix(T,   "Transpose of result")
+
+    return 0
+}

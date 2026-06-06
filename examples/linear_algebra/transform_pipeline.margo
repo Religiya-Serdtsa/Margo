@@ -1,0 +1,72 @@
+@import std/io
+@import c/math
+@import matrix/core
+
+fn void print_matrix(auto_matrix m, string name) {
+    print(name, ":")
+    for r = 0; <matrix_rows(m); ++ {
+        for c = 0; <matrix_cols(m); ++ {
+            print(matrix_get(m, r, c), endl = " ")
+        }
+        print("")
+    }
+}
+
+fn auto_matrix translation(double tx, double ty, double tz) {
+    auto m = matrix_identity(4)
+    matrix_set(m, 0, 3, tx)
+    matrix_set(m, 1, 3, ty)
+    matrix_set(m, 2, 3, tz)
+    return m
+}
+
+fn auto_matrix rotation_z(double angle) {
+    auto m = matrix_identity(4)
+    auto c = cos(angle)
+    auto s = sin(angle)
+    matrix_set(m, 0, 0, c)
+    matrix_set(m, 0, 1, -s)
+    matrix_set(m, 1, 0, s)
+    matrix_set(m, 1, 1, c)
+    return m
+}
+
+fn auto_matrix scaling(double sx, double sy, double sz) {
+    auto m = matrix_identity(4)
+    matrix_set(m, 0, 0, sx)
+    matrix_set(m, 1, 1, sy)
+    matrix_set(m, 2, 2, sz)
+    return m
+}
+
+fn int start(int argC, weird(char, 2) argV) {
+    auto T = translation(1.0, 2.0, 3.0)
+    auto R = rotation_z(3.14159 / 4.0)
+    auto S = scaling(2.0, 2.0, 2.0)
+
+    auto TR  = matrix_mul(T, R)
+    auto TRS = matrix_mul(TR, S)
+
+    print_matrix(T,   "Translation (1,2,3)")
+    print_matrix(R,   "Rotation Z (45 deg)")
+    print_matrix(S,   "Scaling (2,2,2)")
+    print_matrix(TR,  "T * R")
+    print_matrix(TRS, "(T * R) * S")
+
+    auto v = matrix_alloc(4, 1)
+    matrix_set(v, 0, 0, 1.0)
+    matrix_set(v, 1, 0, 0.0)
+    matrix_set(v, 2, 0, 0.0)
+    matrix_set(v, 3, 0, 1.0)
+
+    auto Tv  = matrix_mul(T, v)
+    auto RTv = matrix_mul(R, Tv)
+    auto SRTv = matrix_mul(S, RTv)
+
+    print_matrix(v,     "Vertex (1,0,0,1)")
+    print_matrix(Tv,    "After translation")
+    print_matrix(RTv,   "After rotation")
+    print_matrix(SRTv,  "After scaling")
+
+    return 0
+}
