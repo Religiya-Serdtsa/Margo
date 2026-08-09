@@ -2,6 +2,7 @@
 @import c/string
 @import c/ctype
 @import c/errno
+@import std/io
 
 #define LINE_CAPACITY 4096
 
@@ -47,10 +48,10 @@ fn int search_stream(weird(FILE, 1) input,
         if !line_contains(line, pattern, ignore_case) continue
 
         if show_filename {
-            fprintf(stdout, "%s:", label)
+            out "%s:" % label
         }
         if show_line_number {
-            fprintf(stdout, "%d:", line_number)
+            out "%d:" % line_number
         }
         fputs(line, stdout)
         auto length = strlen(line)
@@ -103,13 +104,15 @@ fn int start(int argc, weird(char, 2) argv) {
     auto failed = 0
     auto file_count = argc - index
 
-    if file_count == 0 {
+    /* This is intentionally a blocked if: handling stdin is a small branch,
+     * while the file path has its own loop and error-recovery flow. */
+    if file_count == 0
         matched += search_stream(stdin, "-", pattern, ignore_case, show_line_number, 0)
-    } else {
+    else
         while index < argc {
             string path = argv[index]
             weird(FILE, 1) input = stdin
-            if strcmp(path, "-") != 0 {
+            if strcmp(path, "-") != 0
                 input = fopen(path, "r")
                 if !input {
                     fprintf(stderr, "%s: %s\n", path, strerror(errno))
@@ -117,7 +120,7 @@ fn int start(int argc, weird(char, 2) argv) {
                     index++
                     continue
                 }
-            }
+            endif
 
             matched += search_stream(input, path, pattern, ignore_case,
                                      show_line_number, file_count > 1)
@@ -126,7 +129,7 @@ fn int start(int argc, weird(char, 2) argv) {
             }
             index++
         }
-    }
+    endif
 
     if failed return 2
     if matched == 0 return 1

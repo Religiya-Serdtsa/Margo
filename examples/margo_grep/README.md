@@ -32,4 +32,5 @@ printf 'Alpha\nbeta\n' | ./margo-grep -i alpha
 
 - `@import c/...`로 기존 C 표준 라이브러리를 사용한다.
 - `fn`, `string`, `weird(FILE, 1)`, 배열 및 괄호 없는 제어 흐름으로 파일 검색기를 구성한다.
+- 긴 stdin/파일 처리 분기는 `if ... else ... endif` blocked-if로 구분하고, 표준 출력 접두사는 `out` 문으로 작성한다.
 - `start(argc, argv)`는 자동 생성되는 C `main`과 연결되어 일반 Unix CLI처럼 인자를 받는다.
