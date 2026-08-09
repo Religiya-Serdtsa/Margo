@@ -22,5 +22,17 @@ fn start(int argC, weird(char, 2) argV) {
             print("odd idx", idx)
         }
     }
+
+    /* blocked if: 중괄호 없이 else/endif로 닫는 분기 */
+    auto score = 7
+    if score >= 10
+        print("excellent")
+    else if score >= 5
+        print("pass")
+        score += 1
+    else
+        print("fail")
+    endif
+    print("final score:", score)
     return 0
 }

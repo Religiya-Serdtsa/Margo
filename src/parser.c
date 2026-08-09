@@ -213,6 +213,11 @@ static bool token_is_statement_leader(const token_t *tok) {
         "do",
         "else",
         "print",
+        "out",
+        "in",
+        "Scan",
+        "ScanLine",
+        "defer",
     };
     for (size_t i = 0; i < sizeof(leaders) / sizeof(leaders[0]); ++i) {
         if (token_is_identifier(tok, leaders[i])) {

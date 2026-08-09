@@ -824,6 +824,52 @@ static bool style_handle_close_brace(style_block_stack_t *stack,
 }
 
 /* =========================================================================
+ * Blocked if (`if cond` newline body ... `else`/`endif`) tracking
+ * ====================================================================== */
+
+/**
+ * @brief Stack of open blocked-if frames, each recording the brace depth of
+ *        the current branch body (construct depth + 1).  Frames are keyed by
+ *        depth so plain C `else` inside nested braces is left untouched.
+ */
+typedef struct {
+    int *items;
+    size_t count;
+    size_t capacity;
+} blocked_if_stack_t;
+
+static void blocked_if_stack_free(blocked_if_stack_t *stack) {
+    if (!stack) {
+        return;
+    }
+    free(stack->items);
+    stack->items = NULL;
+    stack->count = 0;
+    stack->capacity = 0;
+}
+
+static bool blocked_if_stack_push(blocked_if_stack_t *stack, int depth) {
+    if (!stack) {
+        return false;
+    }
+    if (stack->count == stack->capacity) {
+        size_t new_capacity = stack->capacity ? stack->capacity * 2 : 8;
+        int *new_items = realloc(stack->items, new_capacity * sizeof(int));
+        if (!new_items) {
+            return false;
+        }
+        stack->items = new_items;
+        stack->capacity = new_capacity;
+    }
+    stack->items[stack->count++] = depth;
+    return true;
+}
+
+static bool blocked_if_stack_matches(const blocked_if_stack_t *stack, int depth) {
+    return stack && stack->count > 0 && stack->items[stack->count - 1] == depth;
+}
+
+/* =========================================================================
  * RAII scope-exit free injection
  * ====================================================================== */
 
@@ -1803,6 +1849,114 @@ static bool should_insert_semicolon(char last_char) {
 }
 
 /**
+ * @brief Decide whether a line ending with `last` (preceded by `prev`)
+ *        continues onto the next physical line, in which case no implicit
+ *        semicolon may be inserted.
+ *
+ * This keeps semicolons optional even for multi-line macros (`\`
+ * continuations), expressions split after an operator, and calls split
+ * after an open bracket.  Postfix `x++`/`x--` and float literals such as
+ * `1.` still count as complete statements.
+ */
+static bool line_ends_with_continuation(char last, char prev) {
+    switch (last) {
+        case '\\':
+        case '(':
+        case '[':
+        case '=':
+        case '+':
+        case '-':
+        case '*':
+        case '/':
+        case '%':
+        case '&':
+        case '|':
+        case '^':
+        case '<':
+        case '>':
+        case '!':
+        case '~':
+        case '?':
+        case ':':
+            break;
+        case '.':
+            if (prev >= '0' && prev <= '9') {
+                return false;
+            }
+            break;
+        default:
+            return false;
+    }
+    if ((last == '+' || last == '-') && prev == last) {
+        return false;
+    }
+    return true;
+}
+
+/**
+ * @brief Decide whether `ident` can lead a line whose `)`-terminated header
+ *        owns a following `{` block (control-flow keywords, plus the
+ *        type/storage tokens that can start a function definition).
+ */
+static bool line_starts_header_keyword(const char *ident) {
+    static const char *keywords[] = {
+        "if",       "for",     "while",   "switch",
+        "static",   "extern",  "inline",  "const",
+        "unsigned", "signed",  "long",    "short",
+        "int",      "char",    "float",   "double",
+        "void",     "struct",  "union",   "enum",
+        "auto",     "weird",   "string",  "size_t",
+        "bool",     "uint8_t", "uint16_t", "uint32_t",
+        "uint64_t", "int8_t",  "int16_t",  "int32_t",
+        "int64_t",
+    };
+    if (!ident || !ident[0]) {
+        return false;
+    }
+    for (size_t i = 0; i < sizeof(keywords) / sizeof(keywords[0]); ++i) {
+        if (strcmp(ident, keywords[i]) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * @brief Scan past whitespace and comments after `pos` for an opening brace.
+ *
+ * Allman-style headers (`if (cond)\n{`, function definitions, etc.) must
+ * not receive a semicolon after their closing parenthesis.
+ */
+static bool next_significant_is_open_brace(const char *src, size_t len, size_t pos) {
+    size_t j = pos;
+    while (j < len) {
+        char c = src[j];
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+            j++;
+            continue;
+        }
+        if (c == '/' && j + 1 < len && src[j + 1] == '/') {
+            while (j < len && src[j] != '\n') {
+                j++;
+            }
+            continue;
+        }
+        if (c == '/' && j + 1 < len && src[j + 1] == '*') {
+            j += 2;
+            while (j + 1 < len && !(src[j] == '*' && src[j + 1] == '/')) {
+                j++;
+            }
+            if (j + 1 < len) {
+                j += 2;
+            }
+            continue;
+        }
+        return c == '{';
+    }
+    return false;
+}
+
+/**
  * @brief Convert concept-style newline terminators into real semicolons for C.
  */
 static bool insert_implicit_semicolons(char **buffer, size_t *size, diagnostic_t *diag) {
@@ -1820,6 +1974,7 @@ static bool insert_implicit_semicolons(char **buffer, size_t *size, diagnostic_t
     size_t w = 0;
     bool start_of_line = true;
     bool line_is_directive = false;
+    bool directive_continuation = false;
     bool in_user_section = false;
     bool has_pending_user_state = false;
     bool pending_user_state = false;
@@ -1831,6 +1986,7 @@ static bool insert_implicit_semicolons(char **buffer, size_t *size, diagnostic_t
     bool char_escape = false;
     bool block_comment_closing_tail = false;
     char last_non_ws = '\0';
+    char prev_non_ws = '\0';
     char prev_char = '\0';
     bool line_has_assignment = false;
     bool line_closed_aggregate = false;
@@ -1844,22 +2000,42 @@ static bool insert_implicit_semicolons(char **buffer, size_t *size, diagnostic_t
     bool in_identifier = false;
     char ident_buf[64];
     size_t ident_len = 0;
+    char line_first_ident[64] = {0};
+    bool line_first_ident_valid = false;
     for (size_t i = 0; i < len; ++i) {
         char c = src[i];
         char next = (i + 1 < len) ? src[i + 1] : '\0';
         if (c == '\r' || c == '\n') {
+            bool ends_with_backslash = (last_non_ws == '\\');
             if (line_is_directive && has_pending_user_state) {
                 in_user_section = pending_user_state;
-            } else if (!line_is_directive && in_user_section && last_non_ws != '\0') {
+            } else if (!line_is_directive && !directive_continuation &&
+                       !ends_with_backslash &&
+                       in_user_section && last_non_ws != '\0') {
                 bool need_semicolon = should_insert_semicolon(last_non_ws);
                 if (!need_semicolon && last_non_ws == '}' &&
                     (line_has_assignment || line_closed_aggregate)) {
                     need_semicolon = true;
                 }
+                if (need_semicolon && paren_depth > 0) {
+                    need_semicolon = false;
+                }
+                if (need_semicolon &&
+                    line_ends_with_continuation(last_non_ws, prev_non_ws)) {
+                    need_semicolon = false;
+                }
+                if (need_semicolon && last_non_ws == ')' &&
+                    line_first_ident_valid &&
+                    line_starts_header_keyword(line_first_ident) &&
+                    next_significant_is_open_brace(src, len, i)) {
+                    need_semicolon = false;
+                }
                 if (need_semicolon) {
                     out[w++] = ';';
                 }
             }
+            directive_continuation =
+                (line_is_directive || directive_continuation) && ends_with_backslash;
             if (c == '\r') {
                 out[w++] = '\r';
                 if (next == '\n') {
@@ -1875,9 +2051,11 @@ static bool insert_implicit_semicolons(char **buffer, size_t *size, diagnostic_t
             pending_user_state = false;
             in_line_comment = false;
             last_non_ws = '\0';
+            prev_non_ws = '\0';
             line_has_assignment = false;
             prev_char = '\0';
             line_closed_aggregate = false;
+            line_first_ident_valid = false;
             continue;
         }
         if (start_of_line) {
@@ -1967,6 +2145,7 @@ static bool insert_implicit_semicolons(char **buffer, size_t *size, diagnostic_t
         }
         out[w++] = c;
         if (!in_line_comment && !in_block_comment && !part_of_comment_delim && !isspace((unsigned char)c)) {
+            prev_non_ws = last_non_ws;
             last_non_ws = c;
         }
         if (!in_line_comment && !in_block_comment && !in_string && !in_char_literal) {
@@ -1991,6 +2170,10 @@ static bool insert_implicit_semicolons(char **buffer, size_t *size, diagnostic_t
                 }
             } else if (in_identifier) {
                 ident_buf[ident_len] = '\0';
+                if (!line_first_ident_valid) {
+                    memcpy(line_first_ident, ident_buf, ident_len + 1);
+                    line_first_ident_valid = true;
+                }
                 if (strcmp(ident_buf, "struct") == 0 || strcmp(ident_buf, "union") == 0 ||
                     strcmp(ident_buf, "enum") == 0) {
                     pending_aggregate_keyword = true;
@@ -2046,11 +2229,19 @@ static bool insert_implicit_semicolons(char **buffer, size_t *size, diagnostic_t
             prev_char = c;
         }
     }
-    if (in_user_section && !in_line_comment && !in_block_comment) {
+    if (in_user_section && !line_is_directive && !directive_continuation &&
+        !in_line_comment && !in_block_comment) {
         bool need_semicolon = should_insert_semicolon(last_non_ws);
         if (!need_semicolon && last_non_ws == '}' &&
             (line_has_assignment || line_closed_aggregate)) {
             need_semicolon = true;
+        }
+        if (need_semicolon && paren_depth > 0) {
+            need_semicolon = false;
+        }
+        if (need_semicolon &&
+            line_ends_with_continuation(last_non_ws, prev_non_ws)) {
+            need_semicolon = false;
         }
         if (need_semicolon) {
             out[w++] = ';';
@@ -2848,6 +3039,293 @@ static bool handle_scan_call(FILE *out,
 }
 
 /**
+ * @brief Decide whether `out` / `in` at position `i` is used as a statement
+ *        keyword rather than an ordinary identifier (member access such as
+ *        `obj.out` / `ctx->in` is left untouched).
+ */
+static bool io_keyword_preceded_by_member_access(const token_buffer_t *tokens, size_t i) {
+    if (i == 0) {
+        return false;
+    }
+    const token_t *prev = &tokens->items[i - 1];
+    return token_is_symbol(prev, '.') || token_is_symbol(prev, '-') ||
+           token_is_symbol(prev, '>');
+}
+
+/**
+ * @brief Rewrite an `out expr % expr ...` statement.
+ *
+ * When the first operand is a string literal and at least one `%`-chained
+ * argument follows, the statement lowers to `printf(fmt, args...)`, giving
+ * full printf-style formatting (a superset of iostream manipulators).
+ * Otherwise it lowers to a cout-style `margo_print_emit` call with no
+ * separators and no trailing newline.  Inside an `out` statement `%` acts
+ * as the chain operator; write `(a % b)` for modulo.
+ *
+ * Returns true without consuming tokens when `out` is a plain identifier.
+ */
+static bool handle_out_statement(FILE *out,
+                                 const char *source,
+                                 const token_buffer_t *tokens,
+                                 size_t *index,
+                                 size_t *last_emit,
+                                 diagnostic_t *diag) {
+    size_t i = *index;
+    if (io_keyword_preceded_by_member_access(tokens, i)) {
+        return true;
+    }
+    size_t cursor = i + 1;
+    if (cursor >= tokens->count) {
+        return true;
+    }
+    const token_t *first = &tokens->items[cursor];
+    bool starts_expr =
+        first->kind == TOKEN_IDENTIFIER || first->kind == TOKEN_NUMBER ||
+        first->kind == TOKEN_STRING || first->kind == TOKEN_CHAR ||
+        token_is_symbol(first, '(');
+    if (!starts_expr) {
+        return true;
+    }
+    /* Split segments at top-level `%`; the statement ends at the first
+     * newline that does not directly follow a chain operator. */
+    print_argument_list_t segments = {0};
+    bool ok = true;
+    size_t seg_start = first->offset;
+    size_t last_index = cursor;
+    int depth = 0;
+    size_t j = cursor;
+    for (; ok && j < tokens->count; ++j) {
+        const token_t *cur = &tokens->items[j];
+        if (cur->kind == TOKEN_EOF) {
+            break;
+        }
+        if (cur->kind == TOKEN_NEWLINE && depth == 0) {
+            size_t prev = j - 1;
+            while (prev > cursor && tokens->items[prev].kind == TOKEN_NEWLINE) {
+                prev--;
+            }
+            if (token_is_symbol(&tokens->items[prev], '%')) {
+                continue;
+            }
+            break;
+        }
+        if (token_is_symbol(cur, ';') && depth == 0) {
+            break;
+        }
+        if (token_is_symbol(cur, '(') || token_is_symbol(cur, '[') ||
+            token_is_symbol(cur, '{')) {
+            depth++;
+            continue;
+        }
+        if (token_is_symbol(cur, ')') || token_is_symbol(cur, ']') ||
+            token_is_symbol(cur, '}')) {
+            if (depth > 0) {
+                depth--;
+            }
+            continue;
+        }
+        if (token_is_symbol(cur, '%') && depth == 0) {
+            size_t trimmed_start = trim_range_start(source, seg_start, cur->offset);
+            size_t trimmed_end = trim_range_end(source, trimmed_start, cur->offset);
+            if (trimmed_start == trimmed_end) {
+                diagnostic_set(diag, cur->line, "out operand is empty");
+                ok = false;
+                break;
+            }
+            char *expr = duplicate_range(source, trimmed_start, trimmed_end);
+            if (!expr || !print_argument_list_append(&segments, expr)) {
+                free(expr);
+                diagnostic_set(diag, cur->line, "out of memory while capturing out operand");
+                ok = false;
+                break;
+            }
+            seg_start = cur->offset + cur->length;
+            continue;
+        }
+    }
+    if (ok) {
+        last_index = j - 1;
+        const token_t *last_tok = &tokens->items[last_index];
+        size_t seg_end = last_tok->offset + last_tok->length;
+        size_t trimmed_start = trim_range_start(source, seg_start, seg_end);
+        size_t trimmed_end = trim_range_end(source, trimmed_start, seg_end);
+        if (trimmed_start == trimmed_end) {
+            diagnostic_set(diag, tokens->items[i].line, "out operand is empty");
+            ok = false;
+        } else {
+            char *expr = duplicate_range(source, trimmed_start, trimmed_end);
+            if (!expr || !print_argument_list_append(&segments, expr)) {
+                free(expr);
+                diagnostic_set(diag, tokens->items[i].line,
+                               "out of memory while capturing out operand");
+                ok = false;
+            }
+        }
+    }
+    if (!ok) {
+        print_argument_list_free(&segments);
+        return false;
+    }
+    if (!transpiler_copy_range(out, source, *last_emit, tokens->items[i].offset)) {
+        diagnostic_set(diag, tokens->items[i].line, "failed to copy prefix before out statement");
+        print_argument_list_free(&segments);
+        return false;
+    }
+    /* printf form: a pure leading string literal that carries a conversion
+     * specifier, with chained arguments.  Literals without '%' are treated
+     * as cout-style pieces so `out "x=" % x` prints the value. */
+    bool literal_is_format = false;
+    if (segments.count >= 2 && first->kind == TOKEN_STRING &&
+        segments.items[0][0] == '"') {
+        for (const char *p = segments.items[0]; *p; ++p) {
+            if (*p == '%') {
+                literal_is_format = true;
+                break;
+            }
+        }
+    }
+    if (literal_is_format) {
+        if (fputs("printf(", out) < 0 || fputs(segments.items[0], out) < 0) {
+            ok = false;
+        }
+        for (size_t arg_idx = 1; ok && arg_idx < segments.count; ++arg_idx) {
+            if (fputs(", ", out) < 0 || fputs(segments.items[arg_idx], out) < 0) {
+                ok = false;
+            }
+        }
+        if (ok && fputs(")", out) < 0) {
+            ok = false;
+        }
+    } else {
+        if (fputs("margo_print_emit((margo_print_value_t[]){", out) < 0) {
+            ok = false;
+        }
+        for (size_t arg_idx = 0; ok && arg_idx < segments.count; ++arg_idx) {
+            if (arg_idx > 0 && fputs(", ", out) < 0) {
+                ok = false;
+                break;
+            }
+            if (fputs("MARGO_PRINT_VALUE(", out) < 0 ||
+                fputs(segments.items[arg_idx], out) < 0 ||
+                fputs(")", out) < 0) {
+                ok = false;
+                break;
+            }
+        }
+        if (ok &&
+            fprintf(out, "}, %zu, MARGO_PRINT_SPAN(\"\"), true, MARGO_PRINT_SPAN(\"\"), true)",
+                    segments.count) < 0) {
+            ok = false;
+        }
+    }
+    if (!ok) {
+        diagnostic_set(diag, tokens->items[i].line, "failed to emit rewritten out statement");
+        print_argument_list_free(&segments);
+        return false;
+    }
+    *last_emit = tokens->items[last_index].offset + tokens->items[last_index].length;
+    *index = last_index;
+    print_argument_list_free(&segments);
+    return true;
+}
+
+/**
+ * @brief Rewrite an `in x y ...` statement into a type-dispatched scan.
+ *
+ * Each operand must be an identifier; the statement lowers to
+ * `margo_scan_run` with `MARGO_SCAN_PARAM(&ident)` per operand, mirroring
+ * `cin >> x >> y`.  Requires `@import std/io` (shared with `Scan`).
+ *
+ * Returns true without consuming tokens when `in` is a plain identifier.
+ */
+static bool handle_in_statement(FILE *out,
+                                const char *source,
+                                const token_buffer_t *tokens,
+                                size_t *index,
+                                size_t *last_emit,
+                                bool *used_std_io,
+                                size_t *std_io_line,
+                                diagnostic_t *diag) {
+    size_t i = *index;
+    if (io_keyword_preceded_by_member_access(tokens, i)) {
+        return true;
+    }
+    size_t cursor = i + 1;
+    if (cursor >= tokens->count ||
+        tokens->items[cursor].kind != TOKEN_IDENTIFIER) {
+        return true;
+    }
+    print_argument_list_t vars = {0};
+    bool ok = true;
+    size_t j = cursor;
+    for (; ok && j < tokens->count; ++j) {
+        const token_t *cur = &tokens->items[j];
+        if (cur->kind == TOKEN_EOF || cur->kind == TOKEN_NEWLINE ||
+            token_is_symbol(cur, ';')) {
+            break;
+        }
+        if (token_is_symbol(cur, ',')) {
+            continue;
+        }
+        if (cur->kind != TOKEN_IDENTIFIER) {
+            diagnostic_set(diag, cur->line, "in expects identifiers as operands");
+            ok = false;
+            break;
+        }
+        char *name = duplicate_range(source, cur->offset, cur->offset + cur->length);
+        if (!name || !print_argument_list_append(&vars, name)) {
+            free(name);
+            diagnostic_set(diag, cur->line, "out of memory while capturing in operand");
+            ok = false;
+            break;
+        }
+    }
+    if (!ok) {
+        print_argument_list_free(&vars);
+        return false;
+    }
+    if (!transpiler_copy_range(out, source, *last_emit, tokens->items[i].offset)) {
+        diagnostic_set(diag, tokens->items[i].line, "failed to copy prefix before in statement");
+        print_argument_list_free(&vars);
+        return false;
+    }
+    if (fputs("margo_scan_run((margo_scan_param_t[]){", out) < 0) {
+        ok = false;
+    }
+    for (size_t var_idx = 0; ok && var_idx < vars.count; ++var_idx) {
+        if (var_idx > 0 && fputs(", ", out) < 0) {
+            ok = false;
+            break;
+        }
+        if (fputs("MARGO_SCAN_PARAM(&", out) < 0 ||
+            fputs(vars.items[var_idx], out) < 0 ||
+            fputs(")", out) < 0) {
+            ok = false;
+            break;
+        }
+    }
+    if (ok && fprintf(out, "}, %zu, false)", vars.count) < 0) {
+        ok = false;
+    }
+    if (!ok) {
+        diagnostic_set(diag, tokens->items[i].line, "failed to emit rewritten in statement");
+        print_argument_list_free(&vars);
+        return false;
+    }
+    size_t last_index = j - 1;
+    *last_emit = tokens->items[last_index].offset + tokens->items[last_index].length;
+    *index = last_index;
+    if (used_std_io) {
+        *used_std_io = true;
+    }
+    if (std_io_line && *std_io_line == 0) {
+        *std_io_line = tokens->items[i].line;
+    }
+    print_argument_list_free(&vars);
+    return true;
+}
+
+/**
  * @brief Rewrite `@style` directives into comments while preserving spacing.
  */
 static bool handle_style_directive(FILE *out,
@@ -3078,6 +3556,7 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
      * frees).  0 means we are at file scope. */
     int fn_body_depth = 0;
     style_block_stack_t style_blocks = {0};
+    blocked_if_stack_t blocked_ifs = {0};
     bool has_start_function = false;
     bool has_main_function = false;
     bool std_io_imported = false;
@@ -3176,6 +3655,20 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
             bool require_newline = token_is_identifier(tok, "ScanLine");
             bool needs_address_of = token_is_identifier(tok, "Scan");
             if (!handle_scan_call(out, source, &tokens, &i, &last_emit, require_newline, needs_address_of, &std_io_used, &std_io_use_line, diag)) {
+                ok = false;
+                break;
+            }
+            continue;
+        }
+        if (token_is_identifier(tok, "out")) {
+            if (!handle_out_statement(out, source, &tokens, &i, &last_emit, diag)) {
+                ok = false;
+                break;
+            }
+            continue;
+        }
+        if (token_is_identifier(tok, "in")) {
+            if (!handle_in_statement(out, source, &tokens, &i, &last_emit, &std_io_used, &std_io_use_line, diag)) {
                 ok = false;
                 break;
             }
@@ -3527,6 +4020,38 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
                     ok = false;
                     break;
                 }
+                /* Blocked if: a condition terminated by a newline opens a
+                 * brace body that runs until the matching else/endif. */
+                if (header.next_index < tokens.count &&
+                    tokens.items[header.next_index].kind == TOKEN_NEWLINE) {
+                    const token_t *nl = &tokens.items[header.next_index];
+                    if (fputs(" {", out) == EOF) {
+                        diagnostic_set(diag, 0, "failed to open blocked if body");
+                        parser_free_if_header(&header);
+                        ok = false;
+                        break;
+                    }
+                    if (!transpiler_copy_range(out, source, header.condition_end_offset,
+                                               nl->offset + nl->length)) {
+                        diagnostic_set(diag, 0, "failed to copy spacing after if condition");
+                        parser_free_if_header(&header);
+                        ok = false;
+                        break;
+                    }
+                    /* The branch body counts as a real scope so RAII frees
+                     * land inside the virtual braces. */
+                    if (!blocked_if_stack_push(&blocked_ifs, brace_depth + 1)) {
+                        diagnostic_set(diag, tok->line, "out of memory while tracking blocked if");
+                        parser_free_if_header(&header);
+                        ok = false;
+                        break;
+                    }
+                    brace_depth++;
+                    last_emit = nl->offset + nl->length;
+                    i = header.next_index;
+                    parser_free_if_header(&header);
+                    continue;
+                }
                 if (!transpiler_copy_range(out, source, header.condition_end_offset, header.body_offset)) {
                     diagnostic_set(diag, 0, "failed to copy spacing after if condition");
                     parser_free_if_header(&header);
@@ -3538,6 +4063,112 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
                 parser_free_if_header(&header);
                 continue;
             }
+        }
+        /* `else` / `endif` closing a blocked if (line-start tokens only, and
+         * only at the brace depth of the branch body). */
+        if (token_is_identifier(tok, "else") &&
+            blocked_if_stack_matches(&blocked_ifs, brace_depth) &&
+            (i == 0 || tokens.items[i - 1].kind == TOKEN_NEWLINE)) {
+            size_t j = i + 1;
+            if (!transpiler_copy_range(out, source, last_emit, tok->offset)) {
+                diagnostic_set(diag, 0, "failed to copy prefix before else");
+                ok = false;
+                break;
+            }
+            last_emit = tok->offset;
+            /* Close the branch scope like a real '}': frees + defers first. */
+            raii_live_emit_scope_frees(&raii_live, brace_depth, out);
+            defer_emit_scope(&defer_stack, brace_depth, out);
+            brace_depth--;
+            if (j < tokens.count && tokens.items[j].kind != TOKEN_NEWLINE &&
+                token_is_identifier(&tokens.items[j], "if")) {
+                if_header_t header;
+                if (!parser_parse_if_header(source, &tokens, j, &header, diag)) {
+                    ok = false;
+                    break;
+                }
+                if (fprintf(out, "} else if (%s)", header.condition) < 0) {
+                    diagnostic_set(diag, 0, "failed to emit rewritten else if");
+                    parser_free_if_header(&header);
+                    ok = false;
+                    break;
+                }
+                if (header.next_index < tokens.count &&
+                    tokens.items[header.next_index].kind == TOKEN_NEWLINE) {
+                    const token_t *nl = &tokens.items[header.next_index];
+                    if (fputs(" {", out) == EOF ||
+                        !transpiler_copy_range(out, source, header.condition_end_offset,
+                                               nl->offset + nl->length)) {
+                        diagnostic_set(diag, 0, "failed to emit blocked else-if body");
+                        parser_free_if_header(&header);
+                        ok = false;
+                        break;
+                    }
+                    brace_depth++;
+                    last_emit = nl->offset + nl->length;
+                    i = header.next_index;
+                } else {
+                    /* `else if cond {` or same-line statement: the chain
+                     * continues as plain C, so the frame is consumed. */
+                    if (!transpiler_copy_range(out, source, header.condition_end_offset,
+                                               header.body_offset)) {
+                        diagnostic_set(diag, 0, "failed to copy spacing after else-if condition");
+                        parser_free_if_header(&header);
+                        ok = false;
+                        break;
+                    }
+                    last_emit = header.body_offset;
+                    i = header.next_index ? header.next_index - 1 : i;
+                    blocked_ifs.count--;
+                }
+                parser_free_if_header(&header);
+                continue;
+            }
+            if (fputs("} else", out) == EOF) {
+                diagnostic_set(diag, 0, "failed to emit blocked else");
+                ok = false;
+                break;
+            }
+            if (j < tokens.count && tokens.items[j].kind == TOKEN_NEWLINE) {
+                const token_t *nl = &tokens.items[j];
+                if (fputs(" {", out) == EOF ||
+                    !transpiler_copy_range(out, source, tok->offset + tok->length,
+                                           nl->offset + nl->length)) {
+                    diagnostic_set(diag, 0, "failed to emit blocked else body");
+                    ok = false;
+                    break;
+                }
+                brace_depth++;
+                last_emit = nl->offset + nl->length;
+                i = j;
+                continue;
+            }
+            /* `else {` or same-line statement: plain C takes over. */
+            blocked_ifs.count--;
+            last_emit = tok->offset + tok->length;
+            continue;
+        }
+        if (token_is_identifier(tok, "endif") &&
+            blocked_if_stack_matches(&blocked_ifs, brace_depth) &&
+            (i == 0 || tokens.items[i - 1].kind == TOKEN_NEWLINE)) {
+            if (!transpiler_copy_range(out, source, last_emit, tok->offset)) {
+                diagnostic_set(diag, 0, "failed to copy prefix before endif");
+                ok = false;
+                break;
+            }
+            last_emit = tok->offset;
+            /* Close the branch scope like a real '}': frees + defers first. */
+            raii_live_emit_scope_frees(&raii_live, brace_depth, out);
+            defer_emit_scope(&defer_stack, brace_depth, out);
+            brace_depth--;
+            if (fputs("}", out) == EOF) {
+                diagnostic_set(diag, 0, "failed to close blocked if body");
+                ok = false;
+                break;
+            }
+            last_emit = tok->offset + tok->length;
+            blocked_ifs.count--;
+            continue;
         }
 
         /* `return` – inject frees for all owned vars before the keyword */
@@ -3599,6 +4230,13 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
                 ok = false;
                 break;
             }
+            /* A real closing brace at the frame depth would swallow the
+             * enclosing scope of an unterminated blocked if. */
+            if (blocked_if_stack_matches(&blocked_ifs, brace_depth)) {
+                diagnostic_set(diag, tok->line, "if block is missing endif");
+                ok = false;
+                break;
+            }
             /* RAII: inject frees before closing this scope */
             if (!transpiler_copy_range(out, source, last_emit, tok->offset)) {
                 diagnostic_set(diag, tok->line, "failed to copy prefix before '}'");
@@ -3622,10 +4260,14 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
             continue;
         }
     }
+    if (ok && blocked_ifs.count > 0) {
+        diagnostic_set(diag, 0, "if block is missing endif");
+        ok = false;
+    }
     if (ok && std_io_used && !std_io_imported) {
         diagnostic_set(diag,
                        std_io_use_line ? std_io_use_line : 0,
-                       "Scan/ScanLine require '@import std/io'");
+                       "Scan/ScanLine/in require '@import std/io'");
         ok = false;
     }
     if (ok) {
@@ -3656,6 +4298,7 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
     defer_free(&defer_stack);
     free(pending_for_in_iterable);
     style_stack_free(&style_blocks);
+    blocked_if_stack_free(&blocked_ifs);
     lexer_free(&tokens);
     free(source);
     if (!ok) {

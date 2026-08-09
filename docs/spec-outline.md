@@ -25,6 +25,7 @@
 ## 4. Control Flow
 - `for x=0; <N; ++ { ... }`: the unnamed loop variable (`x` here) is implicit and scoped to the loop body.
 - `if v == 1 return 100`: parenthesis-free headers get wrapped during parsing so `return`/`break`/`continue`-style statements keep concept syntax while the emitted C receives `if (v == 1)`.
+- Blocked if: `if cond` followed by a newline opens a brace-free branch that runs until a line-start `else` / `else if cond` / `endif`. Branches act as real scopes (RAII frees and `defer` run at branch end); a missing `endif` is a compile error. `else if cond {` or `else {` hands the chain back to plain C.
 - `else` / `else if` chains after paren-free `if` pass through unchanged since the rewrites preserve compatible C output.
 - Increment slot accepts expression-like statements, enabling `count.odd? ++ : +=2` semantics (reserved for future lowering pass).
 - `mat_find(matrix_expr, target_expr, precision_expr = 0) { ... }`:
@@ -57,7 +58,9 @@
 - `@import c/name` → `#include <name.h>` (or `#include <name>` when `.h` suffix is explicit).
 - `@import c++/path` → stub comment; C++ binding support is a future milestone.
 - `@import godmode` → expands to a comprehensive set of standard C headers (`<stdio.h>`, `<stdlib.h>`, `<string.h>`, `<math.h>`, `<stdint.h>`, `<unistd.h>`, and more) for programs that require the full standard library.
-- `@import std/io` → `<stdio.h>` (also enables `Scan` / `ScanLine` builtins).
+- `@import std/io` → `<stdio.h>` (also enables `Scan` / `ScanLine` builtins and the `in` statement).
+- `out expr % expr ...` is the iostream-style output statement: a leading string literal containing `%` conversions lowers to `printf(fmt, args...)`; otherwise operands are emitted cout-style (type-dispatched, no separators, no trailing newline). Inside `out`, top-level `%` is the chain operator — parenthesize modulo as `(a % b)`. Newlines directly after `%` continue the chain.
+- `in x y ...` is the `cin >> x >> y` analogue: each identifier operand lowers to a type-dispatched `scanf` (same `_Generic` machinery as `Scan`) and requires `@import std/io`. `out`/`in` never rewrite member accesses (`obj.out`, `ctx->in`) or plain variables.
 - `@import std/mem` → `<string.h>`.
 - `@import std/string` → `<string.h>`.
 - `@import std/math` → `<math.h>`.
@@ -65,7 +68,7 @@
 - `@import std/time` → `<time.h>`.
 - `@import std/assert` → `<assert.h>`.
 - `@import std/errno` → `<errno.h>`.
-- `@style c { ... }` toggles strict C-like parsing for easy code importing.
+- `@style c { ... }` marks a block for easy C code importing. Raw C and Margo syntax may be freely mixed inside; semantic validation (arity, `weird` dims, RAII) applies to both, and semicolons remain optional everywhere, including inside the block.
 - Decorators such as `@use_switch_optim` hint optimizer passes (emitted as C comments).
 - `@set autocorrect on` delegates unknown identifier resolution to an fzf-backed suggestion engine.
 - `@import threads/core` injects the header-only threading runtime that powers `threads <name> { locked_var { ... } threadN ... }`, exposing only `threadN.init/join`, `threads.<name>.join_all(chan)`, `threads.<name>.sync()`, and the four decorators (`@chantype`, `@nochan`, `@independent`, `@lazyjoin`).

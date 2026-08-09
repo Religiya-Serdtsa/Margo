@@ -623,7 +623,6 @@ typedef struct {
     sema_diag_list_t     *diags;
     int                   brace_depth;
     bool                  in_function;
-    bool                  inside_style_block;
 } sema_state_t;
 
 /* =========================================================================
@@ -1262,13 +1261,10 @@ bool sema_run(const char           *source,
             continue;
         }
 
-        /* Track @style c blocks: inside them syntax is raw C so we suppress
-         * declaration detection to avoid false positives. */
+        /* `@style c` blocks accept both raw C and Margo syntax, so semantic
+         * validation applies inside them as well; the conservative checks
+         * below simply skip raw-C constructs they cannot parse. */
         if (tok->kind == TOKEN_AT) {
-            size_t j = skip_nl(tokens, i + 1);
-            if (j < tokens->count && token_is_identifier(&tokens->items[j], "style")) {
-                st.inside_style_block = true;
-            }
             continue;
         }
 
@@ -1281,16 +1277,11 @@ bool sema_run(const char           *source,
             /* Pop symbols at this depth */
             symtab_pop_depth(&st.symtab, st.brace_depth);
             if (st.brace_depth == 1) {
-                st.in_function        = false;
-                st.inside_style_block = false;
+                st.in_function = false;
             }
             if (st.brace_depth > 0) {
                 st.brace_depth--;
             }
-            continue;
-        }
-
-        if (st.inside_style_block) {
             continue;
         }
 

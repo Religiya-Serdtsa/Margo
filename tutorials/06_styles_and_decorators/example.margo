@@ -4,6 +4,12 @@
     struct LegacyConfig {
         int threshold;
     };
+
+    /* Raw C와 Margo 문법을 섞어 쓸 수 있고, 세미콜론은 항상 생략 가능하다. */
+    fn int legacy_double(int value) {
+        if value < 0 return 0
+        return value * 2
+    }
 }
 
 @set autocorrect on
@@ -18,5 +24,9 @@ fn start(int argC, weird(char, 2) argV) {
     cfg.threshold = 21
     auto scaled = legacy_scale(cfg.threshold)
     print("Scaled threshold:", scaled)
+    @style c {
+        auto doubled = legacy_double(scaled)
+        print("Doubled:", doubled)
+    }
     return 0
 }

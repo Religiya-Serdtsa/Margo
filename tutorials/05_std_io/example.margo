@@ -19,5 +19,13 @@ fn start(int argC, weird(char, 2) argV) {
     } else {
         print("입력을 받지 못했습니다.")
     }
+
+    /* iostream 스타일 out/in 문 */
+    auto x = 0
+    auto y = 0
+    out "두 정수를 입력하세요: "
+    in x y
+    out "%i + %i = %i\n" % x % y % (x + y)
+    out "x=" % x % ", y=" % y % "\n"
     return 0
 }
