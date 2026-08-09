@@ -10,6 +10,7 @@
 - `string` aliases `char *` but the allocator/runtime appends and tracks `\0` automatically.
 - `auto` triggers inference based on the initializer expression; inference happens after semantic analysis so pointer decay is visible.
 - `weird(T, n)` lowers to `T` with `n` pointer stars; the semantic pass validates that `n` is in [0, 8] and records dimension metadata for call-site diagnostics.
+- `slice(T)` is an ABI-stable `{ data, len, elem_size }` view from `@import margo_std/slice`. `slice_at(T, view, index)` validates bounds and element size before dereferencing; `slice_from(T, array)` and `slice_make(T, ptr, count)` create views without copying.
 - Integer families: `uint8_t` / `uint16_t` / `uint32_t` / `uint64_t` and the `int*_t` variants are first-class Margo types.
 - `size_t` is recognized as a distinct type to avoid implicit narrowing warnings when interfacing with the C standard library.
 - Byte-pattern literals `[0x01, 0xFF, ...]` lower to TU-local `static const uint8_t` buffers plus `(uint8_t *, size_t)` views. Identical literals are deduplicated so file helpers can share backing storage.
@@ -17,6 +18,7 @@
 
 ## 3. Memory Management
 - Built-in `alloc` / `alloc_and_init` produce ownership-bound handles; the transpiler's RAII tracker injects `free` at scope-exit by tracking assignment patterns of the form `ident = alloc(...)`.
+- `@import margo_std/owned` supplies `owned(T)`, `owned_new(T)`, and `owned_array(T, n)`. The latter two are libttak-backed allocations and participate in the same scope-exit and early-return RAII tracking as `alloc`.
 - Scope-exit injection: when a closing `}` is emitted, all owned variables at that brace depth are freed in reverse-declaration order before the brace.
 - Return-path injection: any `return` statement causes the transpiler to emit `free` for every owned variable visible at that point; if the return expression is a bare identifier, that identifier is skipped (ownership transfer).
 - RAII tracking is conservative: only direct top-level assignments are detected; pointer arithmetic or aliasing is left to the C compiler's sanitizers.
@@ -59,6 +61,8 @@
 - `@import c++/path` → stub comment; C++ binding support is a future milestone.
 - `@import godmode` → expands to a comprehensive set of standard C headers (`<stdio.h>`, `<stdlib.h>`, `<string.h>`, `<math.h>`, `<stdint.h>`, `<unistd.h>`, and more) for programs that require the full standard library.
 - `@import std/io` → `<stdio.h>` (also enables `Scan` / `ScanLine` builtins and the `in` statement).
+- `@import margo_std/slice` and `@import margo_std/owned` load the slice-view and owned-allocation modules respectively.
+- `def NAME = integer_constant_expression` lowers to `enum { NAME = (expression) };`: it is parsed as a declaration rather than preprocessor text substitution, and C validates it as a compile-time integer constant.
 - `out expr % expr ...` is the iostream-style output statement: a leading string literal containing `%` conversions lowers to `printf(fmt, args...)`; otherwise operands are emitted cout-style (type-dispatched, no separators, no trailing newline). Inside `out`, top-level `%` is the chain operator — parenthesize modulo as `(a % b)`. Newlines directly after `%` continue the chain.
 - `in x y ...` is the `cin >> x >> y` analogue: each identifier operand lowers to a type-dispatched `scanf` (same `_Generic` machinery as `Scan`) and requires `@import std/io`. `out`/`in` never rewrite member accesses (`obj.out`, `ctx->in`) or plain variables.
 - `@import std/mem` → `<string.h>`.

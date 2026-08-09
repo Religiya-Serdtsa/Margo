@@ -1096,6 +1096,8 @@ static bool token_is_owned_factory(const token_t *tok) {
     static const char *factories[] = {
         "alloc",
         "alloc_and_init",
+        "owned_new",
+        "owned_array",
         "matrix_fill",
         "matrix_identity",
         "matrix_mul",
@@ -2465,6 +2467,20 @@ static bool emit_include_for_import(FILE *out, const import_directive_t *dir, di
         }
         return true;
     }
+    if (dir->kind == IMPORT_KIND_MARGO_STD_SLICE) {
+        if (fputs("#include <margo_std/slice.h>\n", out) == EOF) {
+            diagnostic_set(diag, 0, "failed to emit margo_std/slice include");
+            return false;
+        }
+        return true;
+    }
+    if (dir->kind == IMPORT_KIND_MARGO_STD_OWNED) {
+        if (fputs("#include <margo_std/owned.h>\n", out) == EOF) {
+            diagnostic_set(diag, 0, "failed to emit margo_std/owned include");
+            return false;
+        }
+        return true;
+    }
     if (dir->kind == IMPORT_KIND_STD) {
         const char *mapped = NULL;
         if (strcmp(dir->target, "io") == 0) {
@@ -2514,6 +2530,70 @@ static size_t trim_range_end(const char *src, size_t start, size_t end) {
         end--;
     }
     return end;
+}
+
+/* `def NAME = expression` is parsed as a declaration, not text substitution.
+ * C validates the emitted enum value as an integer constant expression. */
+static bool handle_def_declaration(FILE *out,
+                                   const char *source,
+                                   const token_buffer_t *tokens,
+                                   size_t *index,
+                                   size_t *last_emit,
+                                   diagnostic_t *diag) {
+    size_t i = *index;
+    size_t name_index = i + 1;
+    if (name_index >= tokens->count || tokens->items[name_index].kind != TOKEN_IDENTIFIER) {
+        diagnostic_set(diag, tokens->items[i].line, "def requires a name");
+        return false;
+    }
+    size_t equals_index = name_index + 1;
+    if (equals_index >= tokens->count || !token_is_symbol(&tokens->items[equals_index], '=')) {
+        diagnostic_set(diag, tokens->items[i].line, "def requires '=' after its name");
+        return false;
+    }
+    size_t expr_index = equals_index + 1;
+    if (expr_index >= tokens->count || tokens->items[expr_index].kind == TOKEN_NEWLINE ||
+        tokens->items[expr_index].kind == TOKEN_EOF) {
+        diagnostic_set(diag, tokens->items[i].line, "def requires a constant expression");
+        return false;
+    }
+    int depth = 0;
+    size_t end_index = expr_index;
+    for (; end_index < tokens->count; ++end_index) {
+        const token_t *tok = &tokens->items[end_index];
+        if (tok->kind == TOKEN_EOF || tok->kind == TOKEN_NEWLINE ||
+            (depth == 0 && token_is_symbol(tok, ';'))) {
+            break;
+        }
+        if (token_is_symbol(tok, '(') || token_is_symbol(tok, '[') || token_is_symbol(tok, '{')) {
+            depth++;
+        } else if ((token_is_symbol(tok, ')') || token_is_symbol(tok, ']') || token_is_symbol(tok, '}')) && depth > 0) {
+            depth--;
+        }
+    }
+    if (end_index == expr_index || depth != 0) {
+        diagnostic_set(diag, tokens->items[i].line, "def has an invalid constant expression");
+        return false;
+    }
+    size_t expr_start = trim_range_start(source, tokens->items[expr_index].offset,
+                                         tokens->items[end_index - 1].offset + tokens->items[end_index - 1].length);
+    size_t expr_end = trim_range_end(source, expr_start,
+                                     tokens->items[end_index - 1].offset + tokens->items[end_index - 1].length);
+    if (expr_start == expr_end ||
+        !transpiler_copy_range(out, source, *last_emit, tokens->items[i].offset) ||
+        fputs("enum { ", out) == EOF ||
+        fwrite(tokens->items[name_index].lexeme, 1, tokens->items[name_index].length, out) != tokens->items[name_index].length ||
+        fputs(" = (", out) == EOF ||
+        !transpiler_copy_range(out, source, expr_start, expr_end) ||
+        fputs(") };", out) == EOF) {
+        diagnostic_set(diag, tokens->items[i].line, "failed to emit def declaration");
+        return false;
+    }
+    *last_emit = (end_index < tokens->count && token_is_symbol(&tokens->items[end_index], ';'))
+                     ? tokens->items[end_index].offset + tokens->items[end_index].length
+                     : expr_end;
+    *index = end_index > 0 ? end_index - 1 : i;
+    return true;
 }
 
 static bool range_has_non_whitespace(const char *src, size_t start, size_t end) {
@@ -3591,6 +3671,12 @@ bool margo_transpile_to_buffer(const char *input_path, char **buffer_out, size_t
 
         if (token_is_identifier(tok, "fn")) {
             if (!handle_fn_keyword(out, source, &tokens, &i, &last_emit, &has_start_function, &has_main_function, diag)) {
+                ok = false;
+            }
+            continue;
+        }
+        if (token_is_identifier(tok, "def")) {
+            if (!handle_def_declaration(out, source, &tokens, &i, &last_emit, diag)) {
                 ok = false;
             }
             continue;

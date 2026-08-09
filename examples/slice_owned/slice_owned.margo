@@ -1,0 +1,21 @@
+@import std/io
+@import margo_std/slice
+@import margo_std/owned
+
+def SAMPLE_COUNT = 4
+
+fn int start(int argc, weird(char, 2) argv) {
+    int raw[SAMPLE_COUNT] = {1, 2, 3, 4}
+    slice(int) values = slice_from(int, raw)
+    owned(int) total = owned_new(int)
+    if !total {
+        return 1
+    }
+
+    *total = 0
+    for index=0; <slice_len(values); ++ {
+        *total += slice_at(int, values, index)
+    }
+    out "sum=%d\n" % *total
+    return 0
+}

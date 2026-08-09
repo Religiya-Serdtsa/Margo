@@ -429,6 +429,12 @@ bool parser_parse_import(const char *source,
     } else if (strncmp(sanitized, "margo_std/string_builder", 24) == 0 && sanitized[24] == '\0') {
         kind = IMPORT_KIND_MARGO_STD_STRING_BUILDER;
         payload = "margo_std/string_builder";
+    } else if (strncmp(sanitized, "margo_std/slice", 15) == 0 && sanitized[15] == '\0') {
+        kind = IMPORT_KIND_MARGO_STD_SLICE;
+        payload = "margo_std/slice";
+    } else if (strncmp(sanitized, "margo_std/owned", 15) == 0 && sanitized[15] == '\0') {
+        kind = IMPORT_KIND_MARGO_STD_OWNED;
+        payload = "margo_std/owned";
     } else if (is_local_import_target(sanitized)) {
         kind = IMPORT_KIND_LOCAL;
         payload = sanitized;

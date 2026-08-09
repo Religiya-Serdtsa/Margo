@@ -965,6 +965,8 @@ static bool sema_is_owned_factory(const token_t *tok) {
     static const char *factories[] = {
         "alloc",
         "alloc_and_init",
+        "owned_new",
+        "owned_array",
         "matrix_fill",
         "matrix_identity",
         "matrix_mul",
@@ -1289,6 +1291,16 @@ bool sema_run(const char           *source,
         if (tok->kind == TOKEN_IDENTIFIER &&
             strncmp(tok->lexeme, "fn", tok->length) == 0 && tok->length == 2) {
             st.in_function = true;
+            continue;
+        }
+
+        if (tok->kind == TOKEN_IDENTIFIER &&
+            strncmp(tok->lexeme, "def", tok->length) == 0 && tok->length == 3) {
+            while (i + 1 < tokens->count &&
+                   tokens->items[i + 1].kind != TOKEN_NEWLINE &&
+                   tokens->items[i + 1].kind != TOKEN_EOF) {
+                i++;
+            }
             continue;
         }
 
