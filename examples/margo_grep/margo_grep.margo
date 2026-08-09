@@ -1,0 +1,134 @@
+@import c/stdio
+@import c/string
+@import c/ctype
+@import c/errno
+
+#define LINE_CAPACITY 4096
+
+fn void usage(string program) {
+    fprintf(stderr, "Usage: %s [-i] [-n] PATTERN [FILE ...]\n", program)
+    fprintf(stderr, "Search each input line for a literal PATTERN. Use - for standard input.\n")
+}
+
+fn int lower_ascii(int value) {
+    if value >= 'A' && value <= 'Z' return value + ('a' - 'A')
+    return value
+}
+
+fn int line_contains(string line, string pattern, int ignore_case) {
+    if !ignore_case return strstr(line, pattern) != NULL
+
+    auto pattern_len = strlen(pattern)
+    if pattern_len == 0 return 1
+
+    for offset=0; line[offset] != '\0'; ++ {
+        auto index = 0
+        while index < pattern_len && line[offset + index] != '\0' {
+            if lower_ascii(line[offset + index]) != lower_ascii(pattern[index]) break
+            index++
+        }
+        if index == pattern_len return 1
+    }
+    return 0
+}
+
+fn int search_stream(weird(FILE, 1) input,
+                     string label,
+                     string pattern,
+                     int ignore_case,
+                     int show_line_number,
+                     int show_filename) {
+    char line[LINE_CAPACITY]
+    auto line_number = 0
+    auto matches = 0
+
+    while fgets(line, sizeof(line), input) != NULL {
+        line_number++
+        if !line_contains(line, pattern, ignore_case) continue
+
+        if show_filename {
+            fprintf(stdout, "%s:", label)
+        }
+        if show_line_number {
+            fprintf(stdout, "%d:", line_number)
+        }
+        fputs(line, stdout)
+        auto length = strlen(line)
+        if length > 0 && line[length - 1] != '\n' {
+            fputc('\n', stdout)
+        }
+        matches++
+    }
+    return matches
+}
+
+fn int start(int argc, weird(char, 2) argv) {
+    auto index = 1
+    auto ignore_case = 0
+    auto show_line_number = 0
+
+    while index < argc {
+        string arg = argv[index]
+        if strcmp(arg, "--") == 0 {
+            index++
+            break
+        }
+        if strcmp(arg, "-i") == 0 {
+            ignore_case = 1
+            index++
+            continue
+        }
+        if strcmp(arg, "-n") == 0 {
+            show_line_number = 1
+            index++
+            continue
+        }
+        if strcmp(arg, "-in") == 0 || strcmp(arg, "-ni") == 0 {
+            ignore_case = 1
+            show_line_number = 1
+            index++
+            continue
+        }
+        break
+    }
+
+    if index >= argc {
+        usage(argv[0])
+        return 2
+    }
+
+    string pattern = argv[index]
+    index++
+    auto matched = 0
+    auto failed = 0
+    auto file_count = argc - index
+
+    if file_count == 0 {
+        matched += search_stream(stdin, "-", pattern, ignore_case, show_line_number, 0)
+    } else {
+        while index < argc {
+            string path = argv[index]
+            weird(FILE, 1) input = stdin
+            if strcmp(path, "-") != 0 {
+                input = fopen(path, "r")
+                if !input {
+                    fprintf(stderr, "%s: %s\n", path, strerror(errno))
+                    failed = 1
+                    index++
+                    continue
+                }
+            }
+
+            matched += search_stream(input, path, pattern, ignore_case,
+                                     show_line_number, file_count > 1)
+            if input != stdin {
+                fclose(input)
+            }
+            index++
+        }
+    }
+
+    if failed return 2
+    if matched == 0 return 1
+    return 0
+}

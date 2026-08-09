@@ -17,6 +17,7 @@ Margo is an experimental language that delivers C-native ABI compatibility while
 | `TODO.md` | Roadmap grouped by foundational subsystems. |
 | `deps/` | External playground dependencies (libttak, etc.). |
 | `examples/number_baseball/` | First runnable sample written purely in Margo syntax. |
+| `examples/margo_grep/` | Practical Unix grep-style CLI for files and standard input. |
 
 ## Status
 

@@ -19,6 +19,7 @@
 | `TODO.md` | 구현 단계별 작업 목록. |
 | `deps/` | 외부 실험용 라이브러리(libttak 등).
 | `examples/number_baseball/` | `fn`/`@import`만으로 작성한 첫 실행 예제. |
+| `examples/margo_grep/` | 파일·표준 입력을 검색하는 실용적인 Unix `grep` 스타일 CLI 예제. |
 | `tutorials/` | 주제별 실습 세트. 각 폴더가 문법/함수를 설명하는 Markdown·예제 코드를 포함. |
 
 ## 진행 상황
